@@ -15,9 +15,10 @@ animation-contract-check:
 animation-contract-lint:
     cargo clippy --locked --lib --tests -- -D warnings
 
-# Run clippy
+# Run clippy with every stable feature (`_benchmarks` needs nightly's
+# `feature(test)`, so `--all-features` cannot build on stable).
 clippy:
-    cargo clippy --all-targets --all-features -- -D warnings
+    cargo clippy --all-targets --features "$(python3 -c 'import tomllib; f=tomllib.load(open("Cargo.toml","rb"))["features"]; print(",".join(k for k in f if k not in ("default","_benchmarks")))')" -- -D warnings
 
 # Format code + regenerate the public-API surface snapshots (docs/public-api/).
 # The snapshot runner lives in the self-contained apidoc/ package, so it is
@@ -57,13 +58,15 @@ profile-decode webp_path="" iterations="100":
 profile-encode png_path="" iterations="10":
     cargo run --release --bin profile_encode --features _profiling -- {{png_path}} {{iterations}}
 
-# Run WASM lib tests via wasmtime
+# Run WASM lib tests via wasmtime, simd128 and scalar (as CI does)
 wasm-test:
-    CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime" RUSTFLAGS="-C target-feature=+simd128" cargo test --target wasm32-wasip1 --features simd --lib
+    CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime" RUSTFLAGS="-C target-feature=+simd128" cargo test --lib --release --target wasm32-wasip1 --no-default-features
+    CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime" RUSTFLAGS="-C target-feature=-simd128" cargo test --lib --release --target wasm32-wasip1 --no-default-features
 
 # Check that WASM target compiles (without running)
 wasm-check:
-    RUSTFLAGS="-C target-feature=+simd128" cargo check --target wasm32-wasip1 --features simd
+    RUSTFLAGS="-C target-feature=+simd128" cargo check --target wasm32-wasip1
+    cargo check --target wasm32-wasip1 --no-default-features
 
 # Build without simd feature (scalar fallback)
 build-scalar:
@@ -73,17 +76,19 @@ build-scalar:
 build-no-std:
     cargo build --no-default-features
 
-# Run I4 diagnostic harness (compares zenwebp vs libwebp bitstream internals)
-diag:
-    cargo test --release --features _corpus_tests --test i4_diagnostic_harness -- --nocapture
-
 # Cross-test i686 (32-bit x86) via QEMU
-test-i686:
-    cross test --features "std,simd,pixel-types" --target i686-unknown-linux-gnu
+test-i686: corpus-prefetch
+    CROSS_CONTAINER_OPTS="-v $HOME/.cache/codec-corpus:/codec-corpus/codec-corpus" CODEC_CORPUS_CACHE=/codec-corpus cross test --features "std,pixel-types" --target i686-unknown-linux-gnu
 
 # Cross-test armv7 (32-bit ARM) via QEMU
-test-armv7:
-    cross test --features "std,simd,pixel-types" --target armv7-unknown-linux-gnueabihf
+test-armv7: corpus-prefetch
+    CROSS_CONTAINER_OPTS="-v $HOME/.cache/codec-corpus:/codec-corpus/codec-corpus" CODEC_CORPUS_CACHE=/codec-corpus cross test --features "std,pixel-types" --target armv7-unknown-linux-gnueabihf
+
+# The cross containers cannot fetch codec-corpus datasets; cache every one a
+# test reads on the host first (the same two the i686 CI job prefetches).
+corpus-prefetch:
+    cargo test --features inventory --test inventory corpus_webp_conformance_valid -- --exact
+    cargo test --test v2_pixel_perfect cat1_roundtrip_corpus_cid22 -- --exact
 
 # Cross-test all non-native targets
 test-cross: test-i686 test-armv7
@@ -92,7 +97,7 @@ test-cross: test-i686 test-armv7
 # Check all locally-resolvable feature permutations
 feature-check:
     cargo test --no-default-features
-    cargo test --features "std,simd,pixel-types"
+    cargo test --features "std,pixel-types"
     cargo test --features imgref
     cargo test --features mode_debug
     cargo check --features avx512

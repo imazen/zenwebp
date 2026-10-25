@@ -380,9 +380,9 @@ accuracy is worth 3-5x CPU.
 
 This crate lives inside the `zenwebp` repo as a **self-contained nested
 workspace** (`zenwebp/zenwebp-recompress/`). zenwebp itself is deliberately
-not a Cargo workspace — the sibling path deps below (`../../zensim`, …) would
-break zenwebp's CI, whose runners don't check out the siblings. Build from
-this directory.
+not a Cargo workspace — the unpublished zensim / zenanalyze / zenpixels deps
+(pinned by git rev in `Cargo.toml`) would otherwise enter zenwebp's core
+build graph. Build from this directory.
 
 ```
 zenwebp-recompress/                # nested workspace root (this dir)

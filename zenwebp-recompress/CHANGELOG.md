@@ -6,6 +6,12 @@
 <!-- Breaking changes that will ship together before 0.1.0. -->
 (none yet)
 
+### Build
+- zensim / zenanalyze / zenpixels are now git deps pinned by rev (zensim
+  bab88fd, zenanalyze 8ca647c, zenpixels 8d8dee4) instead of path deps on
+  sibling `main`s, so `Cargo.lock` stays valid under `--locked`; CI runs
+  `--locked` and no longer checks out the siblings.
+
 ### Real per-content-class calibration (2026-05-28)
 - **`src/calibration/calib_tables.rs`** (AUTO-GENERATED) replaces the
   preliminary photo-only 3-ref fit with **per-content-class** tables

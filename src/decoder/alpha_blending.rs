@@ -68,53 +68,37 @@ pub(crate) fn do_alpha_blending(buffer: [u8; 4], canvas: [u8; 4]) -> [u8; 4] {
 mod tests {
     use super::*;
 
-    fn do_alpha_blending_reference(buffer: [u8; 4], canvas: [u8; 4]) -> [u8; 4] {
-        let canvas_alpha = f64::from(canvas[3]);
-        let buffer_alpha = f64::from(buffer[3]);
-        let blend_alpha_f64 = buffer_alpha + canvas_alpha * (1.0 - buffer_alpha / 255.0);
-        //value should be between 0 and 255, this truncates the fractional part
-        let blend_alpha: u8 = blend_alpha_f64 as u8;
-
-        let blend_rgb: [u8; 3] = if blend_alpha == 0 {
-            [0, 0, 0]
-        } else {
-            let mut rgb = [0u8; 3];
-            for i in 0..3 {
-                let canvas_f64 = f64::from(canvas[i]);
-                let buffer_f64 = f64::from(buffer[i]);
-
-                let val = (buffer_f64 * buffer_alpha
-                    + canvas_f64 * canvas_alpha * (1.0 - buffer_alpha / 255.0))
-                    / blend_alpha_f64;
-                //value should be between 0 and 255, this truncates the fractional part
-                rgb[i] = val as u8;
-            }
-
-            rgb
-        };
-
-        [blend_rgb[0], blend_rgb[1], blend_rgb[2], blend_alpha]
-    }
-
-    #[test]
-    #[ignore] // takes too long to run on CI. Run this locally when changing the function.
-    fn alpha_blending_optimization() {
-        for r1 in 0..u8::MAX {
-            for a1 in 11..u8::MAX {
-                for r2 in 0..u8::MAX {
-                    for a2 in 11..u8::MAX {
-                        let opt = do_alpha_blending([r1, 0, 0, a1], [r2, 0, 0, a2]);
-                        let slow = do_alpha_blending_reference([r1, 0, 0, a1], [r2, 0, 0, a2]);
-                        // libwebp doesn't do exact blending and so we don't either
-                        for (o, s) in opt.iter().zip(slow.iter()) {
-                            assert!(
-                                o.abs_diff(*s) <= 3,
-                                "Mismatch in results! opt: {opt:?}, slow: {slow:?}, blended values: [{r1}, 0, 0, {a1}], [{r2}, 0, 0, {a2}]"
-                            );
-                        }
+    /// FNV-1a over `do_alpha_blending` for every (src, dst) red/alpha pair,
+    /// sampled every `step` values per axis. G and B take the same
+    /// per-channel path as R.
+    fn blend_hash(step: usize) -> u64 {
+        let mut h: u64 = 1_469_598_103_934_665_603;
+        for r1 in (0..=255u8).step_by(step) {
+            for a1 in (0..=255u8).step_by(step) {
+                for r2 in (0..=255u8).step_by(step) {
+                    for a2 in (0..=255u8).step_by(step) {
+                        let out = do_alpha_blending([r1, 0, 0, a1], [r2, 0, 0, a2]);
+                        h = (h ^ u64::from(u32::from_le_bytes(out)))
+                            .wrapping_mul(1_099_511_628_211);
                     }
                 }
             }
         }
+        h
+    }
+
+    // Expected hashes come from libwebp's own BlendPixelNonPremult
+    // (src/demux/anim_decode.c, libwebp-sys 0.14.4 vendor), built by
+    // `dev/libwebp-blend-oracle/build.sh`: `blend_oracle 5` and `blend_oracle 1`.
+
+    #[test]
+    fn alpha_blending_matches_libwebp_sampled() {
+        assert_eq!(blend_hash(5), 0x2ebaec7cf153c178);
+    }
+
+    #[test]
+    #[ignore] // 4.3e9 blends; run locally with --release when changing the function.
+    fn alpha_blending_matches_libwebp_exhaustive() {
+        assert_eq!(blend_hash(1), 0x348e86d5f637711b);
     }
 }

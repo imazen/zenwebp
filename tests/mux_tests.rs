@@ -1217,6 +1217,40 @@ fn single_frame_animation_produces_static_webp() {
     assert_eq!(decoder.dimensions(), (16, 16));
 }
 
+/// A single frame that does not cover the canvas stays an animation: a still
+/// would lose the canvas size and the frame's offset. libwebp's mux collapses
+/// only a full-canvas frame; libwebp (webpx) is the reader here.
+#[test]
+fn single_subframe_animation_keeps_its_canvas() {
+    let px: Vec<u8> = (0..4u8).flat_map(|i| [40 * i, 200, 255 - i, 255]).collect();
+    let mut enc = AnimationEncoder::new(6, 4, AnimationConfig::default()).unwrap();
+    enc.add_frame_advanced(
+        &px,
+        PixelLayout::Rgba8,
+        2,
+        2,
+        2,
+        2,
+        0,
+        &EncoderConfig::new_lossless(),
+        DisposeMethod::None,
+        BlendMethod::Overwrite,
+    )
+    .unwrap();
+    let data = enc.finalize(70).unwrap();
+    let mut lib = webpx::AnimationDecoder::new(&data).unwrap();
+    assert_eq!((lib.info().width, lib.info().height), (6, 4));
+    let frames = lib.decode_all().unwrap();
+    assert_eq!(frames.len(), 1);
+    assert_eq!(frames[0].timestamp_ms, 70);
+    let mut want = vec![0u8; 6 * 4 * 4];
+    for (i, p) in px.as_chunks::<4>().0.iter().enumerate() {
+        let (x, y) = (2 + i % 2, 2 + i / 2);
+        want[(y * 6 + x) * 4..][..4].copy_from_slice(p);
+    }
+    assert!(frames[0].data == want, "libwebp canvas");
+}
+
 #[test]
 fn single_frame_lossless_animation_produces_static_vp8l() {
     let rgba = solid_rgba(8, 8, 50, 100, 200, 128);

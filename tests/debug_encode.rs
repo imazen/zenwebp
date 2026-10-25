@@ -4,10 +4,20 @@ use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout};
 
 #[test]
 #[ignore]
-fn debug_encode_kodak1() {
+fn debug_encode_cid22_first() {
+    // First CID22-512 validation photo (Kodak is no longer in codec-corpus).
     let corpus = codec_corpus::Corpus::new().expect("codec-corpus unavailable");
-    let kodak_dir = corpus.get("kodak").expect("kodak corpus unavailable");
-    let path = kodak_dir.join("1.png");
+    let dir = corpus
+        .get("CID22/CID22-512/validation")
+        .expect("CID22-512 validation corpus unavailable");
+    let mut images: Vec<_> = std::fs::read_dir(&dir)
+        .expect("read CID22 dir")
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "png"))
+        .collect();
+    images.sort();
+    let path = images.swap_remove(0);
     let file = std::fs::File::open(path).unwrap();
     let decoder = png::Decoder::new(std::io::BufReader::new(file));
     let mut reader = decoder.read_info().unwrap();

@@ -52,6 +52,14 @@ jobs:
         run: cargo test
       - name: Inventory contract and replay
         run: cargo test --features inventory --test inventory --test inventory_feature --test fuzz_regression --test shared_contracts
+      - name: Inventory both-directions overwrite check
+        # Every byte the inventory calls unconsumed must not change what a
+        # caller observes unless its detail names the reader (and consumed
+        # bytes must change it). It sat #[ignore]d and failing (108 cases)
+        # until 2026-10-24; run it so it stays honest.
+        env:
+          INVENTORY_BD_ITERS: "20000"
+        run: cargo test --features inventory --test inventory_both_directions -- --ignored
       - name: Run tests (no_std)
         run: cargo test --no-default-features
       - name: Test (--features imgref)
@@ -122,10 +130,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: cross-i686
-      - name: Prefetch inventory corpus on the host
+      - name: Prefetch codec-corpus datasets on the host
+        # The cross container cannot fetch datasets; every corpus a test
+        # reads must be cached here first (webp-conformance, CID22-512).
         env:
           CODEC_CORPUS_CACHE: ${{ github.workspace }}/.corpus-cache
-        run: cargo test --features inventory --test inventory corpus_webp_conformance_valid -- --exact
+        run: |
+          cargo test --features inventory --test inventory corpus_webp_conformance_valid -- --exact
+          cargo test --test v2_pixel_perfect cat1_roundtrip_corpus_cid22 -- --exact
       - name: Run tests (i686)
         # Mount the zenanalyze sibling at /zenanalyze inside the cross
         # container, since cross sets WORKDIR=/project and `../zenanalyze`

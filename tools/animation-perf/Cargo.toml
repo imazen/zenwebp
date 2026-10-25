@@ -20,8 +20,8 @@ codegen-units = 1
 
 [patch.crates-io]
 # Merged pixel-context bridge; keep root, fuzz and recompress on one revision.
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "1d3ddd2131b22e9e3754c765d4ce45ce3901de59" }
-zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "1d3ddd2131b22e9e3754c765d4ce45ce3901de59" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "8d8dee412702b40f1d01d398a018074a2b6de5e9" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "8d8dee412702b40f1d01d398a018074a2b6de5e9" }
 zenanalyze-api = { git = "https://github.com/imazen/zenanalyze" }
 zenanalyze = { git = "https://github.com/imazen/zenanalyze" }
 # zencodec#133 (structural inventories). The version floor above (0.1.27) is the first

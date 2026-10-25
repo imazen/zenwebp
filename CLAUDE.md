@@ -13,18 +13,21 @@ DeblockReencode are de-selected — see below). Public API: `recompress()` +
 `plan()`, with `Budget::{OneShot, MaxIterations, MaxTime}`.
 
 **zenwebp is deliberately NOT a Cargo workspace.** The recompress crate
-path-depends on `../zensim`, `../zenpixels`, `../zenanalyze`, which are not
-checked out on zenwebp's core CI runners; making it a workspace member would
-break zenwebp's `cargo build`/`test` (Cargo resolves the whole member graph
-upfront). Build it from its own directory: `cd zenwebp-recompress && cargo
-test`. Its own CI is `.github/workflows/recompress.yml` (isolated, path-
-filtered + **weekly schedule**, checks out the three siblings).
+depends on unpublished zensim / zenpixels / zenanalyze, **pinned by git rev**
+in `zenwebp-recompress/Cargo.toml` (2026-10-25; before that they were path
+deps on sibling `main`s, and the committed lockfile could not stay
+`--locked`-clean because zensim main, a local zensim checkout and the lockfile
+each named a different zenpredict rev). Making it a workspace member would pull
+those git deps into zenwebp's core graph. Build it from its own directory:
+`cd zenwebp-recompress && cargo test`, or `just recompress-contract-check`
+(all `--locked`). Its own CI is `.github/workflows/recompress.yml` (isolated,
+path-filtered + **weekly schedule** for toolchain drift, `--locked`, no
+sibling checkouts). Bump the revs deliberately, then `cargo update` there.
 
-**Two zensims exist in this repo, and only one of them drifts.** The main
-crate takes `zensim = "0.2"` from the **registry** (locked at 0.2.7); the
-nested workspace path-depends on **sibling `zensim` main** (0.3.0). That is
-why sibling drift can redden `recompress.yml` while zenwebp's core CI stays
-green — the isolation works. It also means the two see different APIs: 0.2.7
+**Two zensims exist in this repo.** The main crate takes `zensim = "0.2"`
+from the **registry** (locked at 0.2.7); the nested workspace takes **zensim
+0.3.0 at a pinned git rev**. A broken bump can redden `recompress.yml` while
+zenwebp's core CI stays green — the isolation works. It also means the two see different APIs: 0.2.7
 predates the generation-A deprecation, so `ZensimProfile::latest()` in
 `tests/` and `dev/` is fine there, and would only start warning if the main
 crate is ever bumped to zensim 0.3.

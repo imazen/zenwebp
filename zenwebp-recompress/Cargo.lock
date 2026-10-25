@@ -574,12 +574,13 @@ dependencies = [
 [[package]]
 name = "zenanalyze"
 version = "0.2.0"
+source = "git+https://github.com/imazen/zenanalyze?rev=8ca647c525cf488c61bbf35475ca8ba3db6b628e#8ca647c525cf488c61bbf35475ca8ba3db6b628e"
 dependencies = [
  "archmage",
  "garb",
  "linear-srgb",
  "magetypes",
- "zenpixels 0.2.17 (git+https://github.com/imazen/zenpixels?rev=1d3ddd2131b22e9e3754c765d4ce45ce3901de59)",
+ "zenpixels",
  "zenpixels-convert",
 ]
 
@@ -603,21 +604,13 @@ dependencies = [
  "enough",
  "how-far",
  "whereat",
- "zenpixels 0.2.17 (git+https://github.com/imazen/zenpixels?rev=1d3ddd2131b22e9e3754c765d4ce45ce3901de59)",
+ "zenpixels",
 ]
 
 [[package]]
 name = "zenpixels"
 version = "0.2.17"
-dependencies = [
- "bytemuck",
- "whereat",
-]
-
-[[package]]
-name = "zenpixels"
-version = "0.2.17"
-source = "git+https://github.com/imazen/zenpixels?rev=1d3ddd2131b22e9e3754c765d4ce45ce3901de59#1d3ddd2131b22e9e3754c765d4ce45ce3901de59"
+source = "git+https://github.com/imazen/zenpixels?rev=8d8dee412702b40f1d01d398a018074a2b6de5e9#8d8dee412702b40f1d01d398a018074a2b6de5e9"
 dependencies = [
  "bytemuck",
  "imgref",
@@ -628,7 +621,7 @@ dependencies = [
 [[package]]
 name = "zenpixels-convert"
 version = "0.2.17"
-source = "git+https://github.com/imazen/zenpixels?rev=1d3ddd2131b22e9e3754c765d4ce45ce3901de59#1d3ddd2131b22e9e3754c765d4ce45ce3901de59"
+source = "git+https://github.com/imazen/zenpixels?rev=8d8dee412702b40f1d01d398a018074a2b6de5e9#8d8dee412702b40f1d01d398a018074a2b6de5e9"
 dependencies = [
  "archmage",
  "bytemuck",
@@ -639,13 +632,13 @@ dependencies = [
  "once_cell",
  "paste",
  "whereat",
- "zenpixels 0.2.17 (git+https://github.com/imazen/zenpixels?rev=1d3ddd2131b22e9e3754c765d4ce45ce3901de59)",
+ "zenpixels",
 ]
 
 [[package]]
 name = "zenpredict"
 version = "0.2.0"
-source = "git+https://github.com/imazen/zenanalyze?rev=05de3cbc44b19d8769077d99710b0146c761d6df#05de3cbc44b19d8769077d99710b0146c761d6df"
+source = "git+https://github.com/imazen/zenanalyze?rev=f0903489300aea240ffae2e3f1359f8f2b9a0ba4#f0903489300aea240ffae2e3f1359f8f2b9a0ba4"
 dependencies = [
  "archmage",
  "bytemuck",
@@ -667,12 +660,13 @@ dependencies = [
  "safe_unaligned_simd",
  "whereat",
  "zenblend",
- "zenpixels 0.2.17 (git+https://github.com/imazen/zenpixels?rev=1d3ddd2131b22e9e3754c765d4ce45ce3901de59)",
+ "zenpixels",
 ]
 
 [[package]]
 name = "zensim"
 version = "0.3.0"
+source = "git+https://github.com/imazen/zensim?rev=bab88fde6aae8aaf54f42767bc1272d90340c095#bab88fde6aae8aaf54f42767bc1272d90340c095"
 dependencies = [
  "archmage",
  "bytemuck",
@@ -704,7 +698,7 @@ dependencies = [
  "thiserror",
  "whereat",
  "zencodec",
- "zenpixels 0.2.17 (git+https://github.com/imazen/zenpixels?rev=1d3ddd2131b22e9e3754c765d4ce45ce3901de59)",
+ "zenpixels",
  "zenpixels-convert",
  "zenyuv",
 ]
@@ -718,7 +712,7 @@ dependencies = [
  "rayon",
  "thiserror",
  "zenanalyze",
- "zenpixels 0.2.17",
+ "zenpixels",
  "zensim",
  "zenwebp",
 ]

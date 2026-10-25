@@ -940,17 +940,16 @@ mod corpus_tests {
     #[allow(unused_imports)]
     use super::*;
 
-    fn png_codec_eval_dir() -> std::path::PathBuf {
-        let dir = std::path::PathBuf::from(
-            std::env::var("PNG_CODEC_EVAL_DIR")
-                .unwrap_or_else(|_| "/home/lilith/work/png-codec-eval".into()),
-        );
-        assert!(
-            dir.is_dir(),
-            "png-codec-eval not found: {}. Set PNG_CODEC_EVAL_DIR.",
-            dir.display()
-        );
-        dir
+    /// CID22-512 validation image 792079.png from codec-corpus (it used to be
+    /// read from a local png-codec-eval checkout).
+    fn cid22_792079() -> String {
+        let corpus = codec_corpus::Corpus::new().expect("codec-corpus unavailable");
+        corpus
+            .get("CID22/CID22-512/validation")
+            .expect("CID22-512 validation corpus unavailable")
+            .join("792079.png")
+            .to_string_lossy()
+            .into_owned()
     }
 
     fn load_png(path: &str) -> Option<(Vec<u8>, u32, u32)> {
@@ -1006,14 +1005,16 @@ mod corpus_tests {
     }
 
     #[test]
-    fn kodak_corpus_preset_comparison() {
+    fn cid22_corpus_preset_comparison() {
         let corpus = codec_corpus::Corpus::new().expect("codec-corpus unavailable");
-        let corpus_dir = corpus.get("kodak").expect("kodak corpus unavailable");
+        let corpus_dir = corpus
+            .get("CID22/CID22-512/validation")
+            .expect("CID22-512 validation corpus unavailable");
         let mut total_zen = 0usize;
         let mut total_wpx = 0usize;
         let mut count = 0;
 
-        for entry in std::fs::read_dir(&corpus_dir).expect("Kodak corpus not found") {
+        for entry in std::fs::read_dir(&corpus_dir).expect("CID22 corpus not found") {
             let entry = entry.unwrap();
             let path = entry.path();
             if path.extension().is_some_and(|e| e == "png") {
@@ -1044,7 +1045,7 @@ mod corpus_tests {
 
         let avg_ratio = total_zen as f64 / total_wpx as f64;
         println!(
-            "\nKodak aggregate ({count} images): zenwebp={total_zen} webpx={total_wpx} ratio={avg_ratio:.3}x"
+            "\nCID22 aggregate ({count} images): zenwebp={total_zen} webpx={total_wpx} ratio={avg_ratio:.3}x"
         );
     }
 
@@ -1101,17 +1102,19 @@ mod corpus_tests {
         }
     }
 
-    /// Test Auto preset vs manual presets on kodak (photos) and screenshots.
+    /// Test Auto preset vs manual presets on CID22 (photos) and screenshots.
     /// Auto should produce output within 5% of the "correct" manual preset.
     #[test]
-    fn auto_vs_manual_preset_kodak() {
+    fn auto_vs_manual_preset_cid22() {
         let corpus = codec_corpus::Corpus::new().expect("codec-corpus unavailable");
-        let corpus_dir = corpus.get("kodak").expect("kodak corpus unavailable");
+        let corpus_dir = corpus
+            .get("CID22/CID22-512/validation")
+            .expect("CID22-512 validation corpus unavailable");
         let mut auto_total = 0usize;
         let mut photo_total = 0usize;
         let mut count = 0;
 
-        for entry in std::fs::read_dir(&corpus_dir).expect("Kodak corpus not found") {
+        for entry in std::fs::read_dir(&corpus_dir).expect("CID22 corpus not found") {
             let entry = entry.unwrap();
             let path = entry.path();
             if path.extension().is_some_and(|e| e == "png") {
@@ -1149,13 +1152,13 @@ mod corpus_tests {
 
         let avg_ratio = auto_total as f64 / photo_total as f64;
         println!(
-            "\nKodak Auto vs Photo ({count} images): Auto={auto_total} Photo={photo_total} ratio={avg_ratio:.3}x"
+            "\nCID22 Auto vs Photo ({count} images): Auto={auto_total} Photo={photo_total} ratio={avg_ratio:.3}x"
         );
 
         // Auto should be within 5% of Photo preset for photos
         assert!(
             avg_ratio < 1.05 && avg_ratio > 0.95,
-            "Auto should be within 5% of Photo on kodak, got {avg_ratio:.3}x"
+            "Auto should be within 5% of Photo on CID22, got {avg_ratio:.3}x"
         );
     }
 
@@ -1166,10 +1169,7 @@ mod corpus_tests {
         use std::time::Instant;
 
         // Use a single CID22 test image for quick testing
-        let test_images = [png_codec_eval_dir()
-            .join("test_images/792079.png")
-            .to_string_lossy()
-            .into_owned()];
+        let test_images = [cid22_792079()];
 
         println!("\n=== Multi-pass Encoding Comparison (zenwebp) ===");
         println!("(SNS=0, filter=0, segments=1 for diagnostic isolation)\n");
@@ -1180,7 +1180,8 @@ mod corpus_tests {
         let mut count = 0;
 
         for path in &test_images {
-            if let Some((rgb, w, h)) = load_png(path) {
+            {
+                let (rgb, w, h) = load_png(path).expect("load test image");
                 let name = std::path::Path::new(path)
                     .file_name()
                     .unwrap()
@@ -1322,12 +1323,10 @@ mod corpus_tests {
     /// Uses secant method to converge on target size.
     #[test]
     fn target_size_quality_search() {
-        let test_path = png_codec_eval_dir()
-            .join("test_images/792079.png")
-            .to_string_lossy()
-            .into_owned();
+        let test_path = cid22_792079();
 
-        if let Some((rgb, w, h)) = load_png(&test_path) {
+        {
+            let (rgb, w, h) = load_png(&test_path).expect("load 792079.png");
             // First encode without target_size to get a baseline
             let _cfg14 = zenwebp::encoder::EncoderConfig::new_lossy().with_quality(75.0);
             let baseline = EncodeRequest::new(&_cfg14, &rgb, PixelLayout::Rgb8, w, h)
@@ -1369,20 +1368,16 @@ mod corpus_tests {
             assert_eq!(dw, w);
             assert_eq!(dh, h);
             assert!(!decoded.is_empty());
-        } else {
-            println!("Skipping test: test image not found at {}", test_path);
         }
     }
 
     /// Test target_size with various target values.
     #[test]
     fn target_size_various_targets() {
-        let test_path = png_codec_eval_dir()
-            .join("test_images/792079.png")
-            .to_string_lossy()
-            .into_owned();
+        let test_path = cid22_792079();
 
-        if let Some((rgb, w, h)) = load_png(&test_path) {
+        {
+            let (rgb, w, h) = load_png(&test_path).expect("load 792079.png");
             // Test several target sizes
             let targets = [8000u32, 10000, 12000, 15000];
 
@@ -1406,8 +1401,6 @@ mod corpus_tests {
                 // Verify valid output
                 zenwebp::decoder::decode_rgb(&output).expect("Failed to decode");
             }
-        } else {
-            println!("Skipping test: test image not found");
         }
     }
 }

@@ -150,7 +150,7 @@ fn single_subframe_animation_keeps_its_canvas() {
     assert_eq!(frames.len(), 1);
     assert_eq!(libwebp_durations(&frames), [70]);
     let mut want = vec![0u8; 6 * 4 * 4];
-    for (i, p) in px.chunks_exact(4).enumerate() {
+    for (i, p) in px.as_chunks::<4>().0.iter().enumerate() {
         let (x, y) = (2 + i % 2, 2 + i / 2);
         want[(y * 6 + x) * 4..][..4].copy_from_slice(p);
     }

@@ -11,9 +11,13 @@ use std::path::Path;
 use std::time::Instant;
 use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout};
 
-fn clic_path() -> Option<std::path::PathBuf> {
-    let corpus = codec_corpus::Corpus::new().ok()?;
-    corpus.get("clic2025/validation").ok()
+/// CLIC 2025 final-test split (codec-corpus has no `validation` folder);
+/// a missing dataset fails instead of skipping.
+fn clic_path() -> std::path::PathBuf {
+    let corpus = codec_corpus::Corpus::new().expect("codec-corpus cache unavailable");
+    corpus
+        .get("clic2025/final-test")
+        .expect("clic2025/final-test corpus unavailable")
 }
 
 fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
@@ -165,13 +169,7 @@ fn benchmark_image(rgb: &[u8], width: u32, height: u32, quality: u8) -> Option<B
 #[test]
 #[ignore]
 fn clic_benchmark() {
-    let clic_dir = match clic_path() {
-        Some(p) => p,
-        None => {
-            eprintln!("Skipping: CLIC corpus unavailable");
-            return;
-        }
-    };
+    let clic_dir = clic_path();
 
     let mut images: Vec<_> = fs::read_dir(&clic_dir)
         .unwrap()
@@ -297,13 +295,7 @@ fn format_size(bytes: usize) -> String {
 #[test]
 #[ignore]
 fn clic_detailed_quality_sweep() {
-    let clic_dir = match clic_path() {
-        Some(p) => p,
-        None => {
-            eprintln!("Skipping: CLIC corpus unavailable");
-            return;
-        }
-    };
+    let clic_dir = clic_path();
 
     // Pick first 5 images for detailed sweep
     let mut images: Vec<_> = fs::read_dir(&clic_dir)

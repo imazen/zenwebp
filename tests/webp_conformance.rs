@@ -16,16 +16,7 @@ use alloc::vec;
 #[test]
 #[ignore]
 fn test_webp_valid_files() {
-    let corpus_path = get_corpus_path("webp-conformance/valid");
-    if corpus_path.is_none() {
-        eprintln!("Skipping: codec-corpus not found. Set CORPUS_DIR or clone:");
-        eprintln!(
-            "  git clone --depth=1 https://github.com/imazen/codec-corpus.git ~/codec-corpus"
-        );
-        return;
-    }
-
-    let corpus_path = corpus_path.unwrap();
+    let corpus_path = corpus_path("webp-conformance/valid");
     let mut tested = 0;
     let mut passed = 0;
 
@@ -90,87 +81,104 @@ fn test_webp_valid_files() {
     );
 }
 
+/// Invalid inputs derived from every valid conformance file: truncations at
+/// many offsets, corrupted RIFF / chunk sizes and fourccs. Decoding must
+/// return (Ok or Err) without panicking. (codec-corpus has no `invalid/`
+/// folder; generating the cases keeps them reproducible from the valid set.)
 #[test]
 #[ignore]
 fn test_webp_invalid_robustness() {
-    let corpus_path = get_corpus_path("webp-conformance/invalid");
-    if corpus_path.is_none() {
-        eprintln!("Skipping: invalid/ directory not yet populated in codec-corpus");
-        return;
-    }
-
-    let corpus_path = corpus_path.unwrap();
-    let mut tested = 0;
-    let mut crashed = 0;
-
-    for entry in fs::read_dir(&corpus_path)
-        .unwrap_or_else(|_| {
-            eprintln!("Warning: Failed to read invalid/ directory");
-            fs::read_dir("/dev/null").unwrap()
-        })
+    let corpus_path = corpus_path("webp-conformance/valid");
+    let mut sources: Vec<_> = fs::read_dir(&corpus_path)
+        .expect("read valid/")
         .flatten()
-    {
-        let path = entry.path();
-        if path.extension().and_then(|ext| ext.to_str()) != Some("webp") {
-            continue;
-        }
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("webp"))
+        .collect();
+    sources.sort();
+    assert!(
+        !sources.is_empty(),
+        "no .webp files in {}",
+        corpus_path.display()
+    );
 
-        tested += 1;
-        let data = match fs::read(&path) {
-            Ok(d) => d,
-            Err(_) => continue,
-        };
-
-        // Main requirement: should NOT panic or crash
-        // Result (Ok or Err) is acceptable; we just care about safety
-        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            match WebPDecoder::new(&data) {
-                Ok(mut decoder) => {
-                    let output_size = decoder.output_buffer_size().unwrap_or(0);
-                    if output_size > 0 && output_size < 10_000_000 {
-                        let mut output = alloc::vec![0u8; output_size];
-                        let _ = decoder.read_image(&mut output);
-                    }
+    let mut tested = 0usize;
+    let mut crashed = Vec::new();
+    for path in &sources {
+        let data = fs::read(path).expect("read webp");
+        for (label, mutated) in invalid_variants(&data) {
+            tested += 1;
+            let ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                if let Ok(mut decoder) = WebPDecoder::new(&mutated)
+                    && let Some(size) = decoder.output_buffer_size()
+                    && size < 64 << 20
+                {
+                    let mut output = vec![0u8; size];
+                    let _ = decoder.read_image(&mut output);
                 }
-                Err(_) => {
-                    // Parse error is acceptable for invalid files
-                }
+            }))
+            .is_ok();
+            if !ok {
+                crashed.push(format!("{} {label}", path.display()));
             }
-        }))
-        .is_err()
-        {
-            crashed += 1;
-            eprintln!("CRASH: {}", path.display());
         }
     }
-
-    if tested == 0 {
-        eprintln!("No .webp files found in invalid/");
-        return;
-    }
-
     println!(
-        "WebP Invalid File Test: {}/{} files handled safely (no crashes)",
-        tested - crashed,
-        tested
+        "WebP invalid-input test: {}/{tested} derived inputs handled without panics ({} sources)",
+        tested - crashed.len(),
+        sources.len()
     );
-    assert_eq!(
-        crashed, 0,
-        "Invalid files caused panics/crashes: {}/{}",
-        crashed, tested
-    );
+    assert!(crashed.is_empty(), "panics on: {crashed:#?}");
+}
+
+/// Truncations and header corruptions of one valid file.
+fn invalid_variants(data: &[u8]) -> Vec<(String, Vec<u8>)> {
+    let mut out = Vec::new();
+    let len = data.len();
+    // Truncations: every byte of the headers, then 16 evenly spaced cuts.
+    let mut cuts: Vec<usize> = (0..len.min(64)).collect();
+    cuts.extend((1..16).map(|k| len * k / 16));
+    cuts.sort();
+    cuts.dedup();
+    for cut in cuts {
+        if cut < len {
+            out.push((format!("truncated@{cut}"), data[..cut].to_vec()));
+        }
+    }
+    // Size fields: RIFF size (offset 4) and the first chunk's size (16).
+    for (off, name) in [(4usize, "riff"), (16, "chunk")] {
+        if len >= off + 4 {
+            for v in [
+                0u32,
+                1,
+                7,
+                u32::MAX,
+                u32::MAX - 1,
+                (len as u32).wrapping_mul(2),
+            ] {
+                let mut m = data.to_vec();
+                m[off..off + 4].copy_from_slice(&v.to_le_bytes());
+                out.push((format!("{name}_size={v:#x}"), m));
+            }
+        }
+    }
+    // Fourccs: "WEBP" (8) and the first chunk (12).
+    for off in [8usize, 12] {
+        if len >= off + 4 {
+            let mut m = data.to_vec();
+            m[off] ^= 0x20;
+            out.push((format!("fourcc@{off}"), m));
+        }
+    }
+    out
 }
 
 #[test]
 #[ignore]
 fn test_webp_non_conformant_regression() {
-    let corpus_path = get_corpus_path("webp-conformance/non-conformant");
-    if corpus_path.is_none() {
-        eprintln!("Skipping: non-conformant/ directory not yet populated");
-        return;
-    }
-
-    let corpus_path = corpus_path.unwrap();
+    // codec-corpus has no non-conformant/ folder yet (CLAUDE.md, conformance
+    // Phase 2); the caller supplies one.
+    let corpus_path = env_corpus_path("ZENWEBP_NONCONFORMANT_DIR", "non-conformant WebP corpus");
     let mut tested = 0;
 
     for entry in fs::read_dir(&corpus_path)
@@ -254,7 +262,8 @@ fn decode_webp(data: &[u8]) -> Result<(u32, u32), Box<dyn std::error::Error>> {
 
 /// Decode every .webp in the full scraped corpus and diff against libwebp.
 ///
-/// Walks /mnt/v/output/corpus-builder/webp/ (12,825+ files from 8 sources).
+/// Walks `$ZENWEBP_SCRAPED_WEBP_DIR` (on dev: /mnt/v/output/corpus-builder/webp,
+/// 12,825+ files from 8 sources).
 /// Decodes each file with both zenwebp and libwebp (via webpx), then
 /// compares RGBA output byte-for-byte. Any pixel mismatch or panic is a failure.
 ///
@@ -266,17 +275,9 @@ fn test_scraped_webp_corpus() {
     use std::time::Instant;
     use zenwebp::{DecodeConfig, DecodeRequest};
 
-    let corpus_dir = Path::new("/mnt/v/output/corpus-builder/webp");
-    if !corpus_dir.exists() {
-        eprintln!(
-            "Skipping: scraped corpus not found at {}",
-            corpus_dir.display()
-        );
-        eprintln!(
-            "  Expected: /mnt/v/output/corpus-builder/webp/{{google-native,pexels,unsplash,...}}"
-        );
-        return;
-    }
+    // On dev: ZENWEBP_SCRAPED_WEBP_DIR=/mnt/v/output/corpus-builder/webp
+    let corpus_dir = env_corpus_path("ZENWEBP_SCRAPED_WEBP_DIR", "scraped WebP corpus");
+    let corpus_dir = corpus_dir.as_path();
 
     // Collect all .webp files recursively
     fn collect_webp(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
@@ -307,6 +308,7 @@ fn test_scraped_webp_corpus() {
     let mut mismatch = 0usize;
     let mut panicked = 0usize;
     let mut mismatch_files: Vec<(String, u8, usize)> = Vec::new(); // (path, max_diff, count)
+    let mut animations = 0usize;
 
     let config = DecodeConfig::default().with_dithering_strength(0);
 
@@ -317,6 +319,26 @@ fn test_scraped_webp_corpus() {
             Ok(d) => d,
             Err(_) => continue,
         };
+
+        // Animations: libwebp's still API rejects them (UNSUPPORTED_FEATURE),
+        // so every composited frame is compared with WebPAnimDecoder instead.
+        if WebPDecoder::new(&data).is_ok_and(|d| d.is_animated()) {
+            animations += 1;
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                compare_animation_with_libwebp(&data)
+            })) {
+                Ok(Ok(())) => exact_match += 1,
+                Ok(Err(why)) => {
+                    mismatch += 1;
+                    eprintln!("  ANIMATION MISMATCH: {} — {why}", path.display());
+                }
+                Err(_) => {
+                    panicked += 1;
+                    eprintln!("  PANIC: {}", path.display());
+                }
+            }
+            continue;
+        }
 
         // zenwebp decode (catch panics)
         let zen_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -402,7 +424,7 @@ fn test_scraped_webp_corpus() {
     let elapsed = start.elapsed();
 
     println!("\n=== Scraped WebP Corpus vs libwebp ===");
-    println!("  Total:       {tested}");
+    println!("  Total:       {tested} ({animations} animated)");
     println!("  Exact match: {exact_match}");
     println!("  Mismatch:    {mismatch}");
     println!("  zen fail:    {zen_only_fail}");
@@ -428,10 +450,73 @@ fn test_scraped_webp_corpus() {
         mismatch, 0,
         "{mismatch} files had pixel differences vs libwebp"
     );
+    // libwebp is the oracle in both directions: a file only one side decodes
+    // is a disagreement to settle, not a pass.
+    assert_eq!(
+        zen_only_fail, 0,
+        "{zen_only_fail} files only libwebp decodes"
+    );
+    assert_eq!(
+        lib_only_fail, 0,
+        "{lib_only_fail} files only zenwebp decodes"
+    );
 }
 
-/// Get the codec-corpus path for a specific subdirectory.
-fn get_corpus_path(subdir: &str) -> Option<std::path::PathBuf> {
-    let corpus = codec_corpus::Corpus::new().ok()?;
-    corpus.get(subdir).ok()
+/// Every composited frame (RGBA) and duration of an animation, zenwebp vs
+/// libwebp's `WebPAnimDecoder`. libwebp reports end timestamps.
+fn compare_animation_with_libwebp(data: &[u8]) -> Result<(), String> {
+    let lib = webpx::AnimationDecoder::new(data)
+        .and_then(|mut d| d.decode_all())
+        .map_err(|e| format!("libwebp: {e:?}"))?;
+    let mut dec = zenwebp::mux::AnimationDecoder::new(data).map_err(|e| format!("zen: {e}"))?;
+    let has_alpha = dec.info().has_alpha;
+    let zen = dec.decode_all().map_err(|e| format!("zen: {e}"))?;
+    if zen.len() != lib.len() {
+        return Err(format!("frame count zen {} lib {}", zen.len(), lib.len()));
+    }
+    let mut prev_end = 0i32;
+    for (i, (z, l)) in zen.iter().zip(&lib).enumerate() {
+        let lib_ms = l.timestamp_ms.wrapping_sub(prev_end) as u32;
+        prev_end = l.timestamp_ms;
+        if z.duration_ms != lib_ms {
+            return Err(format!(
+                "frame {i} duration zen {} lib {lib_ms}",
+                z.duration_ms
+            ));
+        }
+        let z4: Vec<u8> = if has_alpha {
+            z.data.clone()
+        } else {
+            z.data
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .flat_map(|p| [p[0], p[1], p[2], 255])
+                .collect()
+        };
+        if z4 != l.data {
+            let diffs = z4.iter().zip(&l.data).filter(|(a, b)| a != b).count();
+            return Err(format!("frame {i}: {diffs} bytes differ"));
+        }
+    }
+    Ok(())
+}
+
+/// A codec-corpus dataset; a missing or unfetchable dataset fails the test.
+fn corpus_path(subdir: &str) -> std::path::PathBuf {
+    let corpus = codec_corpus::Corpus::new().expect("codec-corpus cache unavailable");
+    corpus
+        .get(subdir)
+        .unwrap_or_else(|e| panic!("codec-corpus dataset {subdir} unavailable: {e}"))
+}
+
+/// A directory named by an environment variable. These corpora are not in
+/// codec-corpus, so the caller decides whether the test runs; when it does
+/// run without the variable, it fails with instructions instead of passing.
+fn env_corpus_path(var: &str, what: &str) -> std::path::PathBuf {
+    let dir = std::env::var_os(var)
+        .unwrap_or_else(|| panic!("set {var} to the {what} directory to run this test"));
+    let dir = std::path::PathBuf::from(dir);
+    assert!(dir.is_dir(), "{var}={} is not a directory", dir.display());
+    dir
 }

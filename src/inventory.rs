@@ -723,6 +723,9 @@ impl Walker<'_, '_> {
     const TRUNCATED_NOTE: &'static str = "decode() decodes the bytes present when they suffice, \
         else it falls back to WebPDecoder and fails";
 
+    const PROBE_FALLBACK: &'static str = "; probe() still succeeds: for input shorter than its \
+        RIFF size it answers from the VP8X canvas header and attaches detect::probe's WebPProbe";
+
     const PROBE_ICC: &'static str = "reported through source_encoding_details() \
         (WebPProbe::icc_profile: detect::probe keeps the last ICCP and ignores the RIFF size), \
         not through ImageInfo";
@@ -935,13 +938,23 @@ impl Walker<'_, '_> {
         // --- the VP8X chunk ---------------------------------------------------
         let vp8x_id = self.emit_vp8x(&vp8x, &m)?;
         if let Some(reason) = &m.rejected {
-            self.append_detail(hdr, &format!("decoder rejects this file: {reason}"));
+            let mut t = format!("decoder rejects this file: {reason}");
+            if m.probe_fallback {
+                t.push_str(Self::PROBE_FALLBACK);
+            }
+            self.append_detail(hdr, &t);
         } else if m.d_viable
             && let Some(e) = &m.native_err
         {
             {
+                let probe = if m.probe_fallback {
+                    "probe() answers from the VP8X canvas header (input shorter than its RIFF \
+                     size) with detect::probe's WebPProbe"
+                } else {
+                    "probe() fails here"
+                };
                 let t = format!(
-                    "probe() fails here (read_data: {e}); decode() uses WebPDemuxer when the \
+                    "{probe} (read_data: {e}); decode() uses WebPDemuxer when the \
                      bitstream decodes (else it falls back to WebPDecoder and fails), and its \
                      ImageInfo carries no ICC/EXIF/XMP and no alpha"
                 );
@@ -972,7 +985,14 @@ impl Walker<'_, '_> {
                 ""
             };
             if let Some(reason) = &m.rejected {
-                let why = format!("decoder rejects this file: {reason}");
+                let mut why = format!("decoder rejects this file: {reason}");
+                let probe_reads = m.p_icc == Some(i)
+                    || m.p_last_vp8x == Some(i)
+                    || m.p_bitstream.is_some_and(|(o, _)| o == i);
+                if m.probe_fallback && probe_reads {
+                    why.push_str(Self::PROBE_FALLBACK);
+                    why.push_str("; detect::probe reads this chunk for that WebPProbe");
+                }
                 self.unread(None, c, &why)?;
                 continue;
             }
@@ -1414,6 +1434,10 @@ impl Walker<'_, '_> {
             }
         }
         let first_of = |f: &[u8; 4]| (0..chunks.len()).find(|&i| w_in[i] && &chunks[i].fourcc == f);
+        // `read_data` returns `ChunkMissing` for the first four checks below;
+        // `probe()` answers those from the VP8X canvas header while the input
+        // is shorter than its RIFF size.
+        let mut chunk_missing = native_err.is_none();
         if native_err.is_none() {
             let has = |f: &[u8; 4]| first_of(f).is_some();
             if animated && (!has(b"ANIM") || !has(b"ANMF")) {
@@ -1431,10 +1455,13 @@ impl Walker<'_, '_> {
                 && let Some(i) = first_of(b"ANIM")
                 && chunks[i].size != 6
             {
+                chunk_missing = false;
                 native_err = Some(format!(
                     "ANIM payload is {} bytes, the decoder needs exactly 6",
                     chunks[i].size
                 ));
+            } else {
+                chunk_missing = false;
             }
         }
         // The first ANMF's sub-chunk scan (`read_data`, "store the ALPH, VP8,
@@ -1517,6 +1544,14 @@ impl Walker<'_, '_> {
             .and_then(|d| d.owner.checked_sub(1).map(|o| (o, d.owner_in_anmf)));
 
         let rejected = if d_viable { None } else { native_err.clone() };
+        // `WebpDecodeJob::probe`'s fallback: `ChunkMissing` on input shorter
+        // than its RIFF size, with a complete 10-byte VP8X header.
+        let probe_fallback = chunk_missing
+            && native_err.is_some()
+            && len >= 30
+            && len < 8 + riff_size
+            && vp8x.pos == 12
+            && vp8x.size == 10;
         let firsts: Vec<([u8; 4], Option<usize>)> = [
             b"VP8 ", b"VP8L", b"ALPH", b"ICCP", b"EXIF", b"XMP ", b"ANIM", b"ANMF",
         ]
@@ -1531,6 +1566,7 @@ impl Walker<'_, '_> {
             w_in,
             native_err,
             rejected,
+            probe_fallback,
             d_viable,
             d_last_img,
             d_last_alph,
@@ -2005,6 +2041,10 @@ struct Model {
     native_err: Option<String>,
     /// The file is rejected by every entry point.
     rejected: Option<String>,
+    /// `probe()` still succeeds from the VP8X canvas header (incomplete
+    /// input; see `probe_fallback` in `model`) and attaches `detect::probe`'s
+    /// `WebPProbe`, although `read_data` fails.
+    probe_fallback: bool,
     /// `decode()` takes the pixels from `WebPDemuxer` (non-animated, last image chunk is VP8).
     d_viable: bool,
     d_last_img: Option<usize>,

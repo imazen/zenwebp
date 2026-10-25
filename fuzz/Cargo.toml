@@ -21,8 +21,8 @@ version = ">=0.1.27, <0.3.0"
 # merging, together with the same patch in the root Cargo.toml.
 [patch.crates-io]
 # Merged pixel-context bridge; keep root, fuzz and recompress on one revision.
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "1d3ddd2131b22e9e3754c765d4ce45ce3901de59" }
-zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "1d3ddd2131b22e9e3754c765d4ce45ce3901de59" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "8d8dee412702b40f1d01d398a018074a2b6de5e9" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "8d8dee412702b40f1d01d398a018074a2b6de5e9" }
 zencodec = { git = "https://github.com/imazen/zencodec", rev = "d327434b0826a3e39633665c76f5081c0ceb34cc" }
 
 # Prevent this from interfering with workspaces
