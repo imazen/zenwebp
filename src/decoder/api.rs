@@ -472,6 +472,10 @@ pub struct DecodeRequest<'a> {
     data: &'a [u8],
     stop: Option<&'a dyn enough::Stop>,
     stride_pixels: Option<u32>,
+    /// Decode an animation's first frame instead of refusing it. Only the
+    /// zencodec adapter sets this; its still decode contract takes the
+    /// first frame.
+    allow_animation: bool,
 }
 
 impl<'a> DecodeRequest<'a> {
@@ -483,7 +487,15 @@ impl<'a> DecodeRequest<'a> {
             data,
             stop: None,
             stride_pixels: None,
+            allow_animation: false,
         }
+    }
+
+    /// Decode an animated file's first frame instead of refusing it (the
+    /// zencodec still decode contract).
+    pub(crate) fn allow_animation(mut self) -> Self {
+        self.allow_animation = true;
+        self
     }
 
     /// Set a cooperative cancellation token.
@@ -512,6 +524,7 @@ impl<'a> DecodeRequest<'a> {
             &self.config.to_options(),
             &self.config.limits,
             self.stop,
+            self.allow_animation,
         )?;
         let layout = if has_alpha {
             crate::PixelLayout::Rgba8
@@ -537,6 +550,7 @@ impl<'a> DecodeRequest<'a> {
             &self.config.to_options(),
             &self.config.limits,
             self.stop,
+            self.allow_animation,
         )?;
         Ok((rgba, w, h))
     }
@@ -548,6 +562,7 @@ impl<'a> DecodeRequest<'a> {
             &self.config.to_options(),
             &self.config.limits,
             self.stop,
+            self.allow_animation,
         )?;
         if !has_alpha {
             Ok((native, w, h))
@@ -576,6 +591,7 @@ impl<'a> DecodeRequest<'a> {
             &self.config.to_options(),
             &self.config.limits,
             self.stop,
+            self.allow_animation,
         )?;
         convert_to_output(
             &rgba,
@@ -605,6 +621,7 @@ impl<'a> DecodeRequest<'a> {
             &self.config.to_options(),
             &self.config.limits,
             self.stop,
+            self.allow_animation,
         )?;
         convert_to_output(
             &rgba,
@@ -1796,11 +1813,15 @@ fn decode_native_internal(
     options: &WebPDecodeOptions,
     limits: &super::limits::Limits,
     stop: Option<&dyn enough::Stop>,
+    allow_animation: bool,
 ) -> DecodeResult<(Vec<u8>, u32, u32, bool)> {
     // Limits must reach the constructor so `read_data`'s dimension/frame
     // gates enforce them; a later `set_limits` would run after those checks.
     let mut decoder =
         WebPDecoder::new_with_options_and_limits(data, options.clone(), limits.clone())?;
+    if !allow_animation {
+        refuse_animation(&decoder)?;
+    }
     decoder.set_stop(stop);
     let (w, h) = decoder.dimensions();
     let output_size = decoder
@@ -1814,6 +1835,17 @@ fn decode_native_internal(
     Ok((pixels, w, h, decoder.has_alpha()))
 }
 
+/// Still-image decodes refuse animated files, as libwebp's `WebPDecode`
+/// does; [`AnimationDecoder`](crate::mux::AnimationDecoder) decodes frames.
+fn refuse_animation(decoder: &WebPDecoder<'_>) -> DecodeResult<()> {
+    if decoder.is_animated() {
+        return Err(at!(DecodeError::UnsupportedFeature(String::from(
+            "animated WebP: decode its frames with AnimationDecoder",
+        ))));
+    }
+    Ok(())
+}
+
 /// Decode WebP data to RGBA pixels (always 4 bytes per pixel).
 /// For lossless images with alpha, decodes directly to RGBA (no scratch buffer).
 /// For lossy/opaque images, decodes to native format then expands to RGBA.
@@ -1822,8 +1854,10 @@ fn decode_to_rgba_internal(
     options: &WebPDecodeOptions,
     limits: &super::limits::Limits,
     stop: Option<&dyn enough::Stop>,
+    allow_animation: bool,
 ) -> DecodeResult<(Vec<u8>, u32, u32)> {
-    let (native, w, h, has_alpha) = decode_native_internal(data, options, limits, stop)?;
+    let (native, w, h, has_alpha) =
+        decode_native_internal(data, options, limits, stop, allow_animation)?;
     if has_alpha {
         Ok((native, w, h))
     } else {
@@ -2236,8 +2270,9 @@ pub fn decode_bgr_into(
 /// Decode WebP data to raw YUV 4:2:0 planes.
 ///
 /// For VP8 lossy images, returns the native YUV planes without upsampling.
-/// For VP8L lossless and animated images, decodes to RGB, then converts
-/// with libwebp's encoder RGB->YUV import, as libwebp does after 1.6.0.
+/// For VP8L lossless images, decodes to RGB, then converts with libwebp's
+/// encoder RGB->YUV import, as libwebp does after 1.6.0. Animated files are
+/// refused, as libwebp does.
 ///
 /// # Returns
 /// [`YuvPlanes`] containing separate Y, U, and V buffers.
@@ -2254,8 +2289,9 @@ fn decode_yuv420_with_config(data: &[u8], config: &DecodeConfig) -> DecodeResult
     let decoder =
         WebPDecoder::new_with_options_and_limits(data, config.to_options(), config.limits.clone())?;
     let alloc_pref = config.limits.alloc_pref;
+    refuse_animation(&decoder)?;
 
-    if decoder.is_lossy() && !decoder.is_animated() {
+    if decoder.is_lossy() {
         // For lossy images, extract the native YUV planes from the VP8 frame
         if let Some(range) = decoder.chunks.get(&WebPRiffChunk::VP8) {
             let data_slice = decoder.chunk_slice(range)?;
@@ -2311,7 +2347,7 @@ fn decode_yuv420_with_config(data: &[u8], config: &DecodeConfig) -> DecodeResult
         }
     }
 
-    // Lossless (and animated) images: decode to RGB, then convert with the
+    // Lossless images: decode to RGB, then convert with the
     // encoder's libwebp-exact RGB->YUV import. libwebp does the same since
     // its fix for bug 432241412 ("Have lossless use ImportYUVAFromRGB",
     // after 1.6.0): exact Y, YUV_FIX+2 gamma chroma, alpha ignored (no

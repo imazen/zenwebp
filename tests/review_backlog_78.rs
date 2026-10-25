@@ -324,11 +324,12 @@ mod decode_mux {
     /// buffer without bound.
     #[test]
     fn max_file_size_is_enforced_natively_and_while_streaming() {
-        let data = animated_fixture();
+        // A still: the native one-shot decode refuses animations.
+        let data = std::fs::read("tests/images/gallery1/2.webp").unwrap();
         let too_small = DecodeConfig::default().limits(Limits::none().max_file_size(64));
         let err = DecodeRequest::new(&too_small, &data)
             .decode_rgba()
-            .expect_err("64-byte limit must reject a 22 KB file");
+            .expect_err("64-byte limit must reject a 60 KB file");
         assert!(
             matches!(err.error(), DecodeError::InvalidParameter(_)),
             "got {err:?}"

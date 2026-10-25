@@ -2,6 +2,9 @@
 //!
 //! Each function takes raw WebP bytes and returns decoded pixels + dimensions.
 //! For more control (dithering, upsampling, limits), use [`DecodeRequest`](crate::DecodeRequest).
+//! Animated files are refused with `DecodeError::UnsupportedFeature`, as
+//! libwebp's `WebPDecode` does; decode their frames with
+//! [`AnimationDecoder`](crate::mux::AnimationDecoder).
 //!
 //! # Example
 //!
