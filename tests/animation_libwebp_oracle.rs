@@ -11,7 +11,9 @@
 use std::borrow::Cow;
 use zencodec::animation::FrameDuration;
 use zencodec::decode::{AnimationFrameDecoder as _, DecodeJob as _, DecoderConfig as _};
-use zencodec::encode::{AnimationFrameEncoder as _, EncodeJob as _, EncoderConfig as _};
+use zencodec::encode::{
+    AnimationFrameEncoder as _, EncodeJob as _, Encoder as _, EncoderConfig as _,
+};
 use zenpixels::{PixelBuffer, PixelDescriptor};
 use zenwebp::zencodec::{WebpDecoderConfig, WebpEncoderConfig};
 
@@ -85,18 +87,74 @@ fn animation_encode_round_trips_through_libwebp() {
     assert_eq!(webpx::get_xmp(&data).unwrap().as_deref(), Some(XMP));
 }
 
-/// A one-frame animation stays an animation, with its duration and loop
-/// count, for libwebp too.
+/// A one-frame animation is written as a still image, as libwebp's
+/// `WebPAnimEncoderAssemble` does (#11): byte-identical to the still encoder
+/// with the same metadata, and libwebp reads it as a non-animated image.
 #[test]
-fn single_frame_animation_stays_animated_for_libwebp() {
-    let (data, sources) = encode(&[250], 2, zencodec::Metadata::none());
+fn single_frame_animation_encodes_as_still() {
+    let icc = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
+    let metadata = || {
+        zencodec::Metadata::none()
+            .with_icc(icc)
+            .with_exif(EXIF)
+            .with_xmp(XMP)
+    };
+    let (data, sources) = encode(&[250], 2, metadata());
+    let still = WebpEncoderConfig::lossless()
+        .job()
+        .with_metadata_policy(metadata(), zencodec::MetadataPolicy::PreserveExact)
+        .encoder()
+        .unwrap()
+        .encode(frame(1).as_slice())
+        .unwrap();
+    assert!(
+        data == still.data(),
+        "one-frame animation must equal the still encode"
+    );
+    let info = webpx::ImageInfo::from_webp(&data).unwrap();
+    assert!(!info.has_animation);
+    assert_eq!((info.width, info.height), (8, 8));
+    let (px, w, h) = webpx::decode_rgba(&data).unwrap();
+    assert_eq!((w, h), (8, 8));
+    assert!(px == sources[0]);
+    assert_eq!(webpx::get_icc_profile(&data).unwrap().as_deref(), Some(icc));
+    assert_eq!(webpx::get_exif(&data).unwrap().as_deref(), Some(EXIF));
+    assert_eq!(webpx::get_xmp(&data).unwrap().as_deref(), Some(XMP));
+}
+
+/// A single frame that does not cover the canvas stays an animation: a still
+/// would lose the canvas size and the frame's offset. libwebp's mux collapses
+/// only a full-canvas frame.
+#[test]
+fn single_subframe_animation_keeps_its_canvas() {
+    use zenwebp::mux::{AnimationConfig, AnimationEncoder, BlendMethod, DisposeMethod};
+    let px: Vec<u8> = (0..4u8).flat_map(|i| [40 * i, 200, 255 - i, 255]).collect();
+    let mut enc = AnimationEncoder::new(6, 4, AnimationConfig::default()).unwrap();
+    enc.add_frame_advanced(
+        &px,
+        zenwebp::PixelLayout::Rgba8,
+        2,
+        2,
+        2,
+        2,
+        0,
+        &zenwebp::EncoderConfig::new_lossless(),
+        DisposeMethod::None,
+        BlendMethod::Overwrite,
+    )
+    .unwrap();
+    let data = enc.finalize(70).unwrap();
     let mut lib = webpx::AnimationDecoder::new(&data).unwrap();
-    assert_eq!(lib.info().frame_count, 1);
-    assert_eq!(lib.info().loop_count, 2);
+    assert_eq!((lib.info().width, lib.info().height), (6, 4));
     let frames = lib.decode_all().unwrap();
-    assert_eq!(libwebp_durations(&frames), [250]);
-    assert!(frames[0].data == sources[0]);
-    assert!(webpx::get_xmp(&data).unwrap().is_none());
+    assert_eq!(frames.len(), 1);
+    assert_eq!(libwebp_durations(&frames), [70]);
+    let mut want = vec![0u8; 6 * 4 * 4];
+    for (i, p) in px.chunks_exact(4).enumerate() {
+        let (x, y) = (2 + i % 2, 2 + i / 2);
+        want[(y * 6 + x) * 4..][..4].copy_from_slice(p);
+    }
+    assert!(frames[0].data == want, "libwebp canvas");
 }
 
 /// Decoded animation frames match libwebp's pixels and carry the file's ICC

@@ -1446,7 +1446,7 @@ impl zencodec::encode::AnimationFrameEncoder for WebpAnimationFrameEncoder {
             .ok_or_else(|| EncodeError::InvalidBufferSize("no frames added".into()))
             .map_err(|e| zencodec::CodecError::of(at!(e)))?;
         let data = enc
-            .finalize_animation(self.last_frame_duration_ms)
+            .finalize(self.last_frame_duration_ms)
             .map_err_at(mux_to_encode_err)
             .map_err(zencodec::CodecError::of)?;
         self.limits

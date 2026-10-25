@@ -492,23 +492,12 @@ impl AnimationEncoder {
     ///
     /// `last_frame_duration_ms` is the display duration for the final frame,
     /// since there is no subsequent timestamp to derive it from.
+    ///
+    /// A single full-canvas frame is written as a still image (no ANIM/ANMF),
+    /// as libwebp's `WebPAnimEncoderAssemble` does; its duration and loop
+    /// count are not stored.
     #[track_caller]
-    pub fn finalize(self, last_frame_duration_ms: u32) -> MuxResult<Vec<u8>> {
-        self.finalize_inner(last_frame_duration_ms, true)
-    }
-
-    /// Finalize with animation signaling even when there is only one frame.
-    /// Preserves the frame's duration and repetition count in ANIM/ANMF.
-    #[track_caller]
-    pub fn finalize_animation(self, last_frame_duration_ms: u32) -> MuxResult<Vec<u8>> {
-        self.finalize_inner(last_frame_duration_ms, false)
-    }
-
-    fn finalize_inner(
-        mut self,
-        last_frame_duration_ms: u32,
-        allow_static: bool,
-    ) -> MuxResult<Vec<u8>> {
+    pub fn finalize(mut self, last_frame_duration_ms: u32) -> MuxResult<Vec<u8>> {
         if last_frame_duration_ms > 0x00FF_FFFF {
             return Err(whereat::at!(MuxError::FrameDurationTooLarge {
                 duration_ms: last_frame_duration_ms
@@ -535,9 +524,7 @@ impl AnimationEncoder {
         // This avoids producing a 1-frame animated container (with ANIM/ANMF
         // chunks) when the caller used the animation encoder optimistically
         // without knowing the frame count in advance.
-        if allow_static {
-            self.mux.downgrade_single_frame_to_static();
-        }
+        self.mux.downgrade_single_frame_to_static();
 
         self.mux.assemble()
     }

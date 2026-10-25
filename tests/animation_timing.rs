@@ -126,8 +126,10 @@ mod native_contract {
         .unwrap()
     }
 
+    /// One pushed frame is written as a still image whatever its duration
+    /// or loop count (#11; libwebp's `WebPAnimEncoderAssemble` does the same).
     #[test]
-    fn single_frame_animation_preserves_timing_and_total_plays() {
+    fn single_frame_animation_encodes_as_still() {
         let pixels = pixels();
         for plays in [0, 1, 2, 65535] {
             for milliseconds in [0, 1, 0x00FF_FFFF] {
@@ -145,20 +147,13 @@ mod native_contract {
                     .unwrap();
                 let encoded = encoder.finish(None).unwrap();
                 let demux = WebPDemuxer::new(encoded.data()).unwrap();
-                assert!(
-                    demux.is_animated(),
-                    "explicit animation must retain its signaling"
-                );
+                assert!(!demux.is_animated(), "one frame must encode as a still");
                 assert_eq!(demux.frames().count(), 1);
-                assert_eq!(demux.frame(1).unwrap().duration_ms, milliseconds);
                 let mut decoder = WebpDecoderConfig::new()
                     .job()
-                    .with_limits(zencodec::ResourceLimits::none())
                     .animation_frame_decoder(Cow::Borrowed(encoded.data()), &[])
                     .unwrap();
-                assert_eq!(decoder.loop_count(), Some(plays));
                 let frame = decoder.render_next_frame(None).unwrap().unwrap();
-                assert_eq!(frame.duration(), FrameDuration::from_millis(milliseconds));
                 assert_eq!(frame.pixels().row(0), pixels.as_slice().row(0));
                 assert!(decoder.render_next_frame(None).unwrap().is_none());
             }
@@ -181,20 +176,28 @@ mod native_contract {
         let mut padded = [0xA5u8; 24];
         padded[..8].copy_from_slice(&tight[..8]);
         padded[12..20].copy_from_slice(&tight[8..]);
-        let pixels =
-            zenpixels::PixelSlice::new(&padded, 2, 2, 12, PixelDescriptor::RGBA8_SRGB).unwrap();
         let mut encoder = WebpEncoderConfig::lossless()
             .job()
             .animation_frame_encoder()
             .unwrap();
-        encoder
-            .push_frame_exact(pixels, FrameDuration::from_millis(7), None)
-            .unwrap();
+        // Two frames: a single frame would be written as a still.
+        for ms in [7, 9] {
+            encoder
+                .push_frame_exact(
+                    zenpixels::PixelSlice::new(&padded, 2, 2, 12, PixelDescriptor::RGBA8_SRGB)
+                        .unwrap(),
+                    FrameDuration::from_millis(ms),
+                    None,
+                )
+                .unwrap();
+        }
         let output = encoder.finish(None).unwrap();
         let mut decoder = AnimationDecoder::new(output.data()).unwrap();
-        let frame = decoder.next_frame().unwrap().unwrap();
-        assert_eq!(frame.data, tight);
-        assert_eq!(frame.duration_ms, 7);
+        for ms in [7, 9] {
+            let frame = decoder.next_frame().unwrap().unwrap();
+            assert_eq!(frame.data, tight);
+            assert_eq!(frame.duration_ms, ms);
+        }
         assert!(decoder.next_frame().unwrap().is_none());
     }
 
@@ -248,7 +251,7 @@ mod native_contract {
             .add_frame(&pixels, zenwebp::PixelLayout::Rgba8, timestamp, &config)
             .unwrap();
         assert!(
-            encoder.finalize_animation(1).is_err(),
+            encoder.finalize(1).is_err(),
             "final frame must not cross the u32 timeline ceiling"
         );
         let mut encoder = AnimationEncoder::new(2, 2, AnimationConfig::default()).unwrap();
@@ -256,7 +259,7 @@ mod native_contract {
             .add_frame(&pixels, zenwebp::PixelLayout::Rgba8, timestamp, &config)
             .unwrap();
         assert!(
-            encoder.finalize_animation(0).is_ok(),
+            encoder.finalize(0).is_ok(),
             "exact ceiling is representable"
         );
 
@@ -265,7 +268,7 @@ mod native_contract {
         single
             .add_frame(&pixels, zenwebp::PixelLayout::Rgba8, 0, &config)
             .unwrap();
-        let seed = single.finalize_animation(1).unwrap();
+        let seed = single.finalize(1).unwrap();
         let demux = WebPDemuxer::new(&seed).unwrap();
         let bitstream = demux.frame(1).unwrap().bitstream.to_vec();
         let mut mux = WebPMux::new(2, 2);
@@ -332,7 +335,7 @@ mod native_contract {
         encoder
             .add_frame(&pixels, zenwebp::PixelLayout::Rgba8, 101, &config)
             .unwrap();
-        let bytes = encoder.finalize_animation(1).unwrap();
+        let bytes = encoder.finalize(1).unwrap();
         let demux = WebPDemuxer::new(&bytes).unwrap();
         assert_eq!(
             demux
@@ -500,8 +503,16 @@ mod native_contract {
                         .is_err()
                 );
             }
-            let output = encoder.finalize_animation(10).unwrap();
+            // A second frame keeps the output animated (one frame would be a
+            // still); the first must be the pending frame, unchanged.
+            encoder
+                .add_frame(&pixels, zenwebp::PixelLayout::Rgba8, 10, &config)
+                .unwrap();
+            let output = encoder.finalize(10).unwrap();
             let mut decoder = AnimationDecoder::new(&output).unwrap();
+            let first = decoder.next_frame().unwrap().unwrap();
+            assert_eq!(first.data, pixels);
+            assert_eq!(first.duration_ms, 10);
             assert_eq!(decoder.next_frame().unwrap().unwrap().data, pixels);
             assert!(decoder.next_frame().unwrap().is_none());
         }

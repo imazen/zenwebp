@@ -1104,7 +1104,7 @@ exact animation timing and the decoder wrapper.
 ## Animation contract regressions (2026-09-28)
 
 `tests/animation_timing.rs` and `tests/animation_decode_contract.rs` cover
-exact timing, single-frame animation signaling, total plays, bounded timelines,
+exact timing, single-frame still output, total plays, bounded timelines,
 transactional admission, internal cancellation, and ICC-bearing transcodes.
 The eight admission/timing/metadata/cancellation negative controls were run
 and failed behaviorally with each corresponding fix removed. The decoder
@@ -1114,8 +1114,11 @@ fixes. Do not replace these checks with trait-presence assertions.
 Public native animation timestamps remain u32. Wide checked arithmetic refuses
 unrepresentable timelines; wire durations remain checked u24. Overflow is
 terminal until decoder reset.
-`finalize_animation` retains ANIM/ANMF for one frame; legacy `finalize` may
-produce a static image. Animation output remains buffered until RIFF assembly.
+One full-canvas frame is written as a still, through the native
+`AnimationEncoder::finalize` and the zencodec animation encoder alike (#11;
+libwebp's `WebPAnimEncoderAssemble` does the same; user decision 2026-10-25).
+A single frame smaller than the canvas or offset stays animated, since a
+still would lose the canvas and offset. Animation output remains buffered until RIFF assembly.
 Pixel bytes with non-sRGB descriptors must keep ICC context: accepting them
 as sRGB would silently alter their interpretation. Decode errors after entry
 poison animation state until reset.
