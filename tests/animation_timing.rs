@@ -439,14 +439,17 @@ mod native_contract {
             let calls = Arc::new(AtomicUsize::new(0));
             let mut job = WebpEncoderConfig::lossless().job();
             if job_stop {
-                job = job.with_stop(zencodec::StopToken::new(PollLimit(calls.clone())));
+                job = job.with_pulse(zencodec::SharedPulse::new(
+                    zencodec::how_far::StopOnly::new(PollLimit(calls.clone())),
+                ));
             }
             let mut encoder = job.animation_frame_encoder().unwrap();
             let per_call = PollLimit(calls.clone());
+            let per_call_pulse = zencodec::how_far::StopOnly::borrowed(&per_call);
             let stop = if job_stop {
                 None
             } else {
-                Some(&per_call as &dyn enough::Stop)
+                Some(&per_call_pulse as &dyn zencodec::Pulse)
             };
             assert!(
                 encoder.push_frame(pixels.as_slice(), 10, stop).is_err(),

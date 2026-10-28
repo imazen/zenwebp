@@ -2277,6 +2277,7 @@ fn decode_with(
 
 /// Q1: the job's policy, limits and stop token change the answer.
 #[test]
+#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn review4_q1_job_settings() {
     use zencodec::decode::DecodePolicy;
     let data = still_with_meta(
@@ -2408,7 +2409,9 @@ fn review4_q1_job_settings() {
     let job = || {
         WebpDecoderConfig::new()
             .job()
-            .with_stop(zencodec::StopToken::new(AlwaysStop))
+            .with_pulse(zencodec::SharedPulse::new(
+                zencodec::how_far::StopOnly::new(AlwaysStop),
+            ))
     };
     assert!(decode_with(job(), &data).is_err());
     assert!(job().inventory(&data).is_err());

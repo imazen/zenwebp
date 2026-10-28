@@ -3,7 +3,7 @@
 
 use whereat::{At, at};
 use zencodec::decode::{
-    DecodeJob, DecodeRowSink, Event, IncrementalDecode, Input, Progress, Request, StepError,
+    DecodeJob, DecodeRowSink, Event, IncrementalDecode, Input, InputRequest, Progress, StepError,
 };
 use zencodec::{CategorizedError, CodecError, ImageInfo, LimitExceeded, ResourceLimits};
 use zenpixels::PixelDescriptor;
@@ -13,7 +13,7 @@ pub(crate) struct LimitedWholeFile<J> {
     limits: ResourceLimits,
     codec: &'static str,
     probe: J,
-    need: [Request; 1],
+    need: [InputRequest; 1],
 }
 
 impl<J> LimitedWholeFile<J>
@@ -32,7 +32,7 @@ where
             probe,
             limits,
             codec,
-            need: [Request::at_least(0, 1)],
+            need: [InputRequest::at_least(0, 1)],
         }
     }
 
@@ -66,9 +66,9 @@ where
         &mut self,
         input: Input<'_>,
         sink: &mut dyn DecodeRowSink,
-        stop: &dyn enough::Stop,
+        pulse: &dyn zencodec::Pulse,
     ) -> Result<Progress, StepError<Self::Error>> {
-        stop.check()?;
+        enough::Stop::check(pulse)?;
         // A length hint applies to the source, independently of the offered
         // window. Reject it before the shared adapter requests offset zero.
         let bytes = input.total_len.unwrap_or(0).max(input.bytes.len() as u64);
@@ -90,7 +90,7 @@ where
                 Err(_) => {}
             }
         }
-        let progress = self.inner.step(input, sink, stop)?;
+        let progress = self.inner.step(input, sink, pulse)?;
         if let Some(info) = self.inner.info() {
             self.limits
                 .check_image_info(info)
@@ -98,9 +98,9 @@ where
         }
         // WholeFileIncremental only asks for an offset-zero prefix.
         if progress.event == Event::Need
-            && let Some(Request::AtLeast { offset, min_len }) = self.inner.requested().first()
+            && let Some(InputRequest::AtLeast { offset, min_len }) = self.inner.requested().first()
         {
-            self.need = [Request::at_least(
+            self.need = [InputRequest::at_least(
                 *offset,
                 (*min_len).min(self.request_cap()),
             )];
@@ -108,7 +108,7 @@ where
         Ok(progress)
     }
 
-    fn requested(&self) -> &[Request] {
+    fn requested(&self) -> &[InputRequest] {
         &self.need
     }
 

@@ -107,7 +107,7 @@ fn every_fixture_and_truncation_matches_one_shot() {
             .step(
                 Input::new(0, &data[..header]).with_total_len(data.len() as u64),
                 &mut sink,
-                &enough::Unstoppable,
+                &zencodec::NoPulse,
             )
             .unwrap();
         assert!(matches!(event.event, Event::Metadata(_)));
@@ -127,7 +127,7 @@ fn input_limit_rejects_known_length_before_requesting_file() {
     let result = inc.step(
         Input::empty().with_total_len(1024 * 1024),
         &mut sink,
-        &enough::Unstoppable,
+        &zencodec::NoPulse,
     );
     let Err(StepError::Codec(error)) = result else {
         panic!("must reject before requesting the oversized file: {result:?}");
@@ -153,7 +153,7 @@ fn known_length_limit_is_independent_of_the_offered_offset() {
     let result = inc.step(
         Input::new(17, &[0]).with_total_len(1024 * 1024),
         &mut sink,
-        &enough::Unstoppable,
+        &zencodec::NoPulse,
     );
     let Err(StepError::Codec(error)) = result else {
         panic!("known oversized input must fail before any Need: {result:?}");
@@ -167,7 +167,7 @@ fn known_length_limit_is_independent_of_the_offered_offset() {
     );
     assert!(sink.descriptor().is_none());
     assert!(matches!(
-        inc.step(Input::empty(), &mut sink, &enough::Unstoppable),
+        inc.step(Input::empty(), &mut sink, &zencodec::NoPulse),
         Err(StepError::Finished)
     ));
 }
@@ -189,23 +189,23 @@ fn unknown_length_input_requests_stay_bounded() {
             .unwrap();
         let mut sink = CollectSink::new();
         let result = inc
-            .step(Input::empty(), &mut sink, &enough::Unstoppable)
+            .step(Input::empty(), &mut sink, &zencodec::NoPulse)
             .unwrap();
         assert_eq!(result.event, Event::Need);
         assert!(matches!(
             inc.requested(),
-            [zencodec::decode::Request::AtLeast {
+            [zencodec::decode::InputRequest::AtLeast {
                 offset: 0,
                 min_len: 1..=33
             }]
         ));
         let bytes = [0u8; 33];
         assert!(matches!(
-            inc.step(Input::new(0, &bytes), &mut sink, &enough::Unstoppable),
+            inc.step(Input::new(0, &bytes), &mut sink, &zencodec::NoPulse),
             Err(StepError::Codec(_))
         ));
         assert!(matches!(
-            inc.step(Input::empty(), &mut sink, &enough::Unstoppable),
+            inc.step(Input::empty(), &mut sink, &zencodec::NoPulse),
             Err(StepError::Finished)
         ));
     }
@@ -227,7 +227,7 @@ fn header_limits_fail_before_the_body_is_requested() {
         inc.step(
             Input::new(0, &data[..header]),
             &mut sink,
-            &enough::Unstoppable
+            &zencodec::NoPulse
         ),
         Err(StepError::Codec(_))
     ));
@@ -246,7 +246,7 @@ fn exact_input_cap_allows_eof_without_early_rows() {
     // Even a complete-looking payload is not EOF until the source says so.
     for _ in 0..2 {
         let p = inc
-            .step(Input::new(0, data), &mut sink, &enough::Unstoppable)
+            .step(Input::new(0, data), &mut sink, &zencodec::NoPulse)
             .unwrap();
         assert!(matches!(p.event, Event::Metadata(_) | Event::Need));
         assert_eq!(p.consumed, 0);
@@ -256,13 +256,13 @@ fn exact_input_cap_allows_eof_without_early_rows() {
         .step(
             Input::new(0, data).with_total_len(data.len() as u64),
             &mut sink,
-            &enough::Unstoppable,
+            &zencodec::NoPulse,
         )
         .unwrap();
     assert!(matches!(p.event, Event::Rows { .. }));
     assert!(sink.finished());
     assert!(matches!(
-        inc.step(Input::empty(), &mut sink, &enough::Unstoppable)
+        inc.step(Input::empty(), &mut sink, &zencodec::NoPulse)
             .unwrap()
             .event,
         Event::Done(_)
@@ -366,13 +366,13 @@ fn complete_animation_limits_are_checked_after_early_header() {
         .unwrap();
     let mut sink = CollectSink::new();
     let early = inc
-        .step(Input::new(0, &data[..30]), &mut sink, &enough::Unstoppable)
+        .step(Input::new(0, &data[..30]), &mut sink, &zencodec::NoPulse)
         .unwrap();
     assert!(matches!(early.event, Event::Metadata(_)));
     let Err(StepError::Codec(error)) = inc.step(
         Input::new(0, data).with_total_len(data.len() as u64),
         &mut sink,
-        &enough::Unstoppable,
+        &zencodec::NoPulse,
     ) else {
         panic!("full animation must be refused before emitting rows");
     };

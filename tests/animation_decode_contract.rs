@@ -126,14 +126,21 @@ fn animation_decode_cancellation_reaches_lossy_and_lossless_kernels() {
             let calls = Arc::new(AtomicUsize::new(0));
             let mut job = WebpDecoderConfig::new().job();
             if job_stop {
-                job = job.with_stop(zencodec::StopToken::new(PollLimit(calls.clone())));
+                job = job.with_pulse(zencodec::SharedPulse::new(
+                    zencodec::how_far::StopOnly::new(PollLimit(calls.clone())),
+                ));
             }
             let mut decoder = job
                 .animation_frame_decoder(Cow::Borrowed(&encoded), &[])
                 .unwrap();
             calls.store(0, Ordering::Relaxed);
             let per_call = PollLimit(calls.clone());
-            let result = decoder.render_next_frame(if job_stop { None } else { Some(&per_call) });
+            let per_call_pulse = zencodec::how_far::StopOnly::borrowed(&per_call);
+            let result = decoder.render_next_frame(if job_stop {
+                None
+            } else {
+                Some(&per_call_pulse)
+            });
             assert!(
                 result.is_err(),
                 "lossy={lossy}, job_stop={job_stop}: ignored internal stop"
@@ -148,6 +155,7 @@ fn animation_decode_cancellation_reaches_lossy_and_lossless_kernels() {
 }
 
 #[test]
+#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn still_decoder_views_keep_icc_context_and_bgra_pixels() {
     use zencodec::decode::{Decode, StreamingDecode};
     use zencodec::encode::Encoder;

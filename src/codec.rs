@@ -603,7 +603,6 @@ impl zencodec::encode::EncoderConfig for WebpEncoderConfig {
     fn job(self) -> WebpEncodeJob {
         WebpEncodeJob {
             config: self,
-            stop: None,
             pulse: None,
             icc: None,
             exif: None,
@@ -623,7 +622,7 @@ impl zencodec::encode::EncoderConfig for WebpEncoderConfig {
 /// Per-operation WebP encode job.
 pub struct WebpEncodeJob {
     config: WebpEncoderConfig,
-    stop: Option<zencodec::StopToken>,
+    /// The operation pulse (a legacy `with_stop` token arrives wrapped in one).
     pulse: Option<how_far::SharedPulse>,
     icc: Option<Arc<[u8]>>,
     exif: Option<Arc<[u8]>>,
@@ -719,16 +718,10 @@ impl zencodec::encode::EncodeJob for WebpEncodeJob {
     type Enc = WebpEncoder;
     type AnimationFrameEnc = WebpAnimationFrameEncoder;
 
-    fn with_stop(mut self, stop: zencodec::StopToken) -> Self {
-        self.stop = Some(stop);
-        self
-    }
-
     /// Cancellation and progress. A still encode declares 100 units and
     /// reports percent; an animation encoder reports one unit per accepted
     /// frame (the total is unknown until `finish`).
     fn with_pulse(mut self, pulse: how_far::SharedPulse) -> Self {
-        self.stop = Some(zencodec::StopToken::new(pulse.clone()));
         self.pulse = Some(pulse);
         self
     }
@@ -786,7 +779,6 @@ impl zencodec::encode::EncodeJob for WebpEncodeJob {
         // `do_encode` via `resolve_color_emit`, under this policy.
         Ok(WebpEncoder {
             inner_config,
-            stop: self.stop,
             pulse: self.pulse,
             icc: self.icc,
             exif,
@@ -828,7 +820,6 @@ impl zencodec::encode::EncodeJob for WebpEncodeJob {
             canvas_size: self.canvas_size,
             loop_count,
             limits: self.limits,
-            stop: self.stop,
             pulse: self.pulse,
             icc: self.icc,
             exif: self.exif,
@@ -868,7 +859,7 @@ enum StreamAccum {
 /// Single-image WebP encoder.
 pub struct WebpEncoder {
     inner_config: EncoderConfig,
-    stop: Option<zencodec::StopToken>,
+    /// The operation pulse (a legacy `with_stop` token arrives wrapped in one).
     pulse: Option<how_far::SharedPulse>,
     icc: Option<Arc<[u8]>>,
     exif: Option<Arc<[u8]>>,
@@ -927,10 +918,11 @@ impl WebpEncoder {
 
         let mut req =
             EncodeRequest::new(&self.inner_config, pixels, layout, w, h).with_stride(stride_pixels);
-        if let Some(ref stop) = self.stop {
+        let (stop, pulse) = native_controls(self.pulse.as_ref());
+        if let Some(stop) = stop {
             req = req.with_stop(stop);
         }
-        if let Some(ref pulse) = self.pulse {
+        if let Some(pulse) = pulse {
             req = req.with_pulse(pulse);
         }
         let icc_holder = resolve_webp_icc(self.icc.as_ref(), self.cicp, self.color_policy, layout)?;
@@ -1153,8 +1145,8 @@ pub struct WebpAnimationFrameEncoder {
     canvas_size: Option<(u32, u32)>,
     loop_count: crate::decoder::LoopCount,
     limits: ResourceLimits,
-    stop: Option<zencodec::StopToken>,
-    /// The job's pulse: one unit per accepted frame.
+    /// The job's pulse: checked with each call's pulse; one unit per accepted
+    /// frame.
     pulse: Option<how_far::SharedPulse>,
     icc: Option<Arc<[u8]>>,
     exif: Option<Arc<[u8]>>,
@@ -1244,13 +1236,13 @@ impl zencodec::encode::AnimationFrameEncoder for WebpAnimationFrameEncoder {
         &mut self,
         pixels: PixelSlice<'_>,
         duration: zencodec::animation::FrameDuration,
-        stop: Option<&dyn enough::Stop>,
+        pulse: Option<&dyn zencodec::Pulse>,
     ) -> Result<zencodec::animation::FrameDuration, Self::Error> {
         let mut timing = self.timing;
         let encoded = timing
             .quantize(duration)
             .map_err(|_| Self::reject(UnsupportedOperation::AnimationTiming))?;
-        self.push_frame_exact(pixels, encoded, stop)?;
+        self.push_frame_exact(pixels, encoded, pulse)?;
         self.timing = timing;
         Ok(encoded)
     }
@@ -1259,21 +1251,21 @@ impl zencodec::encode::AnimationFrameEncoder for WebpAnimationFrameEncoder {
         &mut self,
         pixels: PixelSlice<'_>,
         duration: zencodec::animation::FrameDuration,
-        stop: Option<&dyn enough::Stop>,
+        pulse: Option<&dyn zencodec::Pulse>,
     ) -> Result<(), Self::Error> {
         let ticks = duration
             .ticks_at(1000)
             .ok()
             .and_then(|n| u32::try_from(n).ok())
             .ok_or_else(|| Self::reject(UnsupportedOperation::AnimationTiming))?;
-        self.push_frame(pixels, ticks, stop)
+        self.push_frame(pixels, ticks, pulse)
     }
 
     fn push_frame(
         &mut self,
         pixels: PixelSlice<'_>,
         duration_ms: u32,
-        stop: Option<&dyn enough::Stop>,
+        pulse: Option<&dyn zencodec::Pulse>,
     ) -> Result<(), At<zencodec::CodecError>> {
         if self.failed {
             return Err(zencodec::CodecError::of(at!(
@@ -1287,10 +1279,10 @@ impl zencodec::encode::AnimationFrameEncoder for WebpAnimationFrameEncoder {
             .cumulative_ms
             .checked_add(duration_ms)
             .ok_or_else(|| Self::reject(UnsupportedOperation::AnimationTiming))?;
-        let job_stop = self.stop.clone();
+        let job = self.pulse.clone();
         let stops = AnimationStops {
-            job: job_stop.as_ref(),
-            call: stop,
+            job: job.as_ref().map(|p| p as &dyn enough::Stop),
+            call: pulse.map(|p| p as &dyn enough::Stop),
         };
         enough::Stop::check(&stops)
             .map_err(|e| zencodec::CodecError::of(at!(EncodeError::from(e))))?;
@@ -1427,17 +1419,17 @@ impl zencodec::encode::AnimationFrameEncoder for WebpAnimationFrameEncoder {
 
     fn finish(
         self,
-        stop: Option<&dyn enough::Stop>,
+        pulse: Option<&dyn zencodec::Pulse>,
     ) -> Result<EncodeOutput, At<zencodec::CodecError>> {
         if self.failed {
             return Err(zencodec::CodecError::of(at!(
                 EncodeError::InvalidBufferSize("animation encoder has failed".into())
             )));
         }
-        let job_stop = self.stop.clone();
+        let job = self.pulse.clone();
         let stops = AnimationStops {
-            job: job_stop.as_ref(),
-            call: stop,
+            job: job.as_ref().map(|p| p as &dyn enough::Stop),
+            call: pulse.map(|p| p as &dyn enough::Stop),
         };
         enough::Stop::check(&stops)
             .map_err(|e| zencodec::CodecError::of(at!(EncodeError::from(e))))?;
@@ -1605,7 +1597,6 @@ impl zencodec::decode::DecoderConfig for WebpDecoderConfig {
     fn job<'a>(self) -> Self::Job<'a> {
         WebpDecodeJob {
             config: self,
-            stop: None,
             pulse: None,
             limits: ResourceLimits::none(),
             start_frame_index: 0,
@@ -1622,7 +1613,7 @@ impl zencodec::decode::DecoderConfig for WebpDecoderConfig {
 #[derive(Clone)]
 pub struct WebpDecodeJob {
     config: WebpDecoderConfig,
-    stop: Option<zencodec::StopToken>,
+    /// The operation pulse (a legacy `with_stop` token arrives wrapped in one).
     pulse: Option<how_far::SharedPulse>,
     limits: ResourceLimits,
     start_frame_index: u32,
@@ -1904,18 +1895,12 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
     type StreamDec = WebpStreamingDecoder;
     type AnimationFrameDec = WebpAnimationFrameDecoder;
 
-    fn with_stop(mut self, stop: zencodec::StopToken) -> Self {
-        self.stop = Some(stop);
-        self
-    }
-
     /// Cancellation and progress. Still decodes (one-shot, scanline-batch and
     /// push) declare the image height and report decoded rows; with a pulse
     /// the scanline-batch decoder takes its full-image path, like any stop
     /// token. Animation decoders declare the frame count and report one unit
     /// per decoded frame.
     fn with_pulse(mut self, pulse: how_far::SharedPulse) -> Self {
-        self.stop = Some(zencodec::StopToken::new(pulse.clone()));
         self.pulse = Some(pulse);
         self
     }
@@ -1988,7 +1973,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
         &self,
         data: &[u8],
     ) -> Result<zencodec::inventory::Inventory, At<zencodec::CodecError>> {
-        if let Some(ref stop) = self.stop {
+        if let Some(ref stop) = self.pulse {
             enough::Stop::check(stop)
                 .map_err(|e| zencodec::CodecError::of(at!(DecodeError::Cancelled(e))))?;
         }
@@ -2029,7 +2014,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
                 ));
             }
         }
-        let stop = self.stop.clone();
+        let stop = self.pulse.clone();
         let mut check = || -> Result<(), crate::inventory::WalkError> {
             if let Some(ref s) = stop {
                 use enough::Stop;
@@ -2094,11 +2079,9 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
         preferred: &[PixelDescriptor],
     ) -> Result<WebpDecoder<'a>, At<zencodec::CodecError>> {
         let cfg = self.build_config();
-        let stop = self.stop.take();
         Ok(WebpDecoder {
             config: cfg,
-            stop,
-            pulse: self.pulse.clone(),
+            pulse: self.pulse.take(),
             input_size_limit: self.effective_input_size_limit(),
             limits: self.limits,
             data,
@@ -2128,7 +2111,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
         // This also preserves orientation, policy, format and limit semantics.
         if !hint_bakes(self.orientation)
             && self.policy.is_none()
-            && self.stop.is_none()
+            && self.pulse.is_none()
             && self.limits.max_memory_bytes.is_none()
             && preferred.is_empty()
             && let Ok(stream) = self
@@ -2155,7 +2138,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
         data: Cow<'a, [u8]>,
         preferred: &[PixelDescriptor],
     ) -> Result<WebpAnimationFrameDecoder, At<zencodec::CodecError>> {
-        if let Some(stop) = &self.stop {
+        if let Some(stop) = &self.pulse {
             enough::Stop::check(stop)
                 .map_err(|e| zencodec::CodecError::of(at!(DecodeError::from(e))))?;
         }
@@ -2272,7 +2255,6 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
             inner: WebpAnimationInner::Native(alloc::boxed::Box::new(
                 NativeAnimationFrameDecoder {
                     decoder,
-                    stop: self.stop,
                     pulse: self.pulse.inspect(|pulse| {
                         crate::pulse::declare_total(pulse, u64::from(total_frames));
                     }),
@@ -2329,7 +2311,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
 /// Single-image WebP decoder.
 pub struct WebpDecoder<'a> {
     config: DecodeConfig,
-    stop: Option<zencodec::StopToken>,
+    /// The operation pulse (a legacy `with_stop` token arrives wrapped in one).
     pulse: Option<how_far::SharedPulse>,
     input_size_limit: Option<u64>,
     limits: ResourceLimits,
@@ -2375,7 +2357,7 @@ impl WebpDecoder<'_> {
         // Honor cancellation before any work, and never swallow a
         // cancellation from the lossy fast path by retrying the general
         // path — a pre-stopped token must fail the decode.
-        if let Some(ref stop) = self.stop {
+        if let Some(ref stop) = self.pulse {
             enough::Stop::check(stop).map_err(|e| at!(DecodeError::Cancelled(e)))?;
         }
         self.check_input_size(data)?;
@@ -2406,10 +2388,11 @@ impl WebpDecoder<'_> {
         // Wire the stop token like do_decode_general — without it the lossy
         // fast path silently ignored cancellation.
         let mut req = DecodeRequest::new(&self.config, data);
-        if let Some(ref stop) = self.stop {
+        let (stop, pulse) = native_controls(self.pulse.as_ref());
+        if let Some(stop) = stop {
             req = req.stop(stop);
         }
-        if let Some(ref pulse) = self.pulse {
+        if let Some(pulse) = pulse {
             req = req.pulse(pulse);
         }
         let (pixels, w, h) = req.decode_rgba_lossy()?;
@@ -2473,10 +2456,11 @@ impl WebpDecoder<'_> {
     /// General decode path (handles lossless, animation frames, etc.).
     fn do_decode_general(&self, data: &[u8]) -> Result<DecodeOutput, At<DecodeError>> {
         let mut req = DecodeRequest::new(&self.config, data);
-        if let Some(ref stop) = self.stop {
+        let (stop, pulse) = native_controls(self.pulse.as_ref());
+        if let Some(stop) = stop {
             req = req.stop(stop);
         }
-        if let Some(ref pulse) = self.pulse {
+        if let Some(pulse) = pulse {
             req = req.pulse(pulse);
         }
 
@@ -2490,10 +2474,11 @@ impl WebpDecoder<'_> {
             _ => {
                 // Fallback: decode as RGBA
                 let mut rgba_req = DecodeRequest::new(&self.config, data);
-                if let Some(ref stop) = self.stop {
+                let (stop, pulse) = native_controls(self.pulse.as_ref());
+                if let Some(stop) = stop {
                     rgba_req = rgba_req.stop(stop);
                 }
-                if let Some(ref pulse) = self.pulse {
+                if let Some(pulse) = pulse {
                     rgba_req = rgba_req.pulse(pulse);
                 }
                 let (rgba_pixels, rw, rh) = rgba_req.decode_rgba()?;
@@ -2643,7 +2628,7 @@ fn push_decoder_impl<'a>(
 
     // Clone stop out of the job so we can still check cancellation after
     // `streaming_decoder` consumes `job` below.
-    let stop = job.stop.clone();
+    let stop = job.pulse.clone();
     let fallback_job = job.clone();
 
     // Build the streaming decoder. If this rejects the input (e.g.
@@ -3056,14 +3041,14 @@ impl zencodec::decode::AnimationFrameDecoder for WebpAnimationFrameDecoder {
 
     fn render_next_frame(
         &mut self,
-        stop: Option<&dyn enough::Stop>,
+        pulse: Option<&dyn zencodec::Pulse>,
     ) -> Result<Option<AnimationFrame<'_>>, Self::Error> {
-        if let Some(stop) = stop {
-            stop.check()
+        if let Some(stop) = pulse {
+            enough::Stop::check(stop)
                 .map_err(|e| zencodec::CodecError::of(at!(DecodeError::from(e))))?;
         }
         match &mut self.inner {
-            WebpAnimationInner::Native(native) => native.render_next_frame(stop),
+            WebpAnimationInner::Native(native) => native.render_next_frame(pulse),
             WebpAnimationInner::Still {
                 pixels, emitted, ..
             } => {
@@ -3080,14 +3065,14 @@ impl zencodec::decode::AnimationFrameDecoder for WebpAnimationFrameDecoder {
 
     fn render_next_frame_owned(
         &mut self,
-        stop: Option<&dyn enough::Stop>,
+        pulse: Option<&dyn zencodec::Pulse>,
     ) -> Result<Option<OwnedAnimationFrame>, Self::Error> {
-        if let Some(stop) = stop {
-            stop.check()
+        if let Some(stop) = pulse {
+            enough::Stop::check(stop)
                 .map_err(|e| zencodec::CodecError::of(at!(DecodeError::from(e))))?;
         }
         match &mut self.inner {
-            WebpAnimationInner::Native(native) => native.render_next_frame_owned(stop),
+            WebpAnimationInner::Native(native) => native.render_next_frame_owned(pulse),
             WebpAnimationInner::Still {
                 pixels, emitted, ..
             } => {
@@ -3103,19 +3088,19 @@ impl zencodec::decode::AnimationFrameDecoder for WebpAnimationFrameDecoder {
     }
     fn render_next_frame_to_sink(
         &mut self,
-        stop: Option<&dyn enough::Stop>,
+        pulse: Option<&dyn zencodec::Pulse>,
         sink: &mut dyn zencodec::decode::DecodeRowSink,
     ) -> Result<Option<OutputInfo>, Self::Error> {
         if let WebpAnimationInner::Native(native) = &mut self.inner {
-            return native.render_next_frame_to_sink(stop, sink);
+            return native.render_next_frame_to_sink(pulse, sink);
         }
-        zencodec::helpers::copy_frame_to_sink(self, stop, sink)
+        zencodec::helpers::copy_frame_to_sink(self, pulse, sink)
     }
 }
 
 struct NativeAnimationFrameDecoder {
     decoder: OwnedAnimDecoder,
-    stop: Option<zencodec::StopToken>,
+    /// The operation pulse (a legacy `with_stop` token arrives wrapped in one).
     pulse: Option<how_far::SharedPulse>,
     failed: bool,
     color_context: Arc<zenpixels::ColorContext>,
@@ -3239,26 +3224,27 @@ impl NativeAnimationFrameDecoder {
             .map_err(|e| at!(DecodeError::InvalidParameter(alloc::format!("{e}"))))
     }
 
-    fn advance(&mut self, stop: Option<&dyn enough::Stop>) -> Result<Option<u32>, At<DecodeError>> {
+    fn advance(
+        &mut self,
+        pulse: Option<&dyn zencodec::Pulse>,
+    ) -> Result<Option<u32>, At<DecodeError>> {
         if self.failed {
             return Err(at!(DecodeError::InvalidParameter(
                 "animation decoder has failed".into()
             )));
         }
-        let job = self.stop.clone();
+        // One unit per decoded frame to the job's pulse when it can report;
+        // otherwise it is only a stop (see `native_controls`).
+        let job = self.pulse.clone();
+        let (job_stop, job_report) = native_controls(job.as_ref());
         let stops = AnimationStops {
-            job: job.as_ref(),
-            call: stop,
+            job: job_stop,
+            call: pulse.map(|p| p as &dyn enough::Stop),
         };
-        // One unit per decoded frame to the job's pulse, if any.
-        let job_pulse = self.pulse.clone();
-        let base: &dyn how_far::Pulse = match &job_pulse {
-            Some(pulse) => pulse,
-            None => &how_far::NoPulse,
-        };
+        let base: &dyn how_far::Pulse = job_report.unwrap_or(&how_far::NoPulse);
         let ctl = how_far::WithStop::borrowed(base, &stops);
         let result = (|| {
-            enough::Stop::check(&stops).map_err(|e| at!(DecodeError::from(e)))?;
+            enough::Stop::check(&ctl).map_err(|e| at!(DecodeError::from(e)))?;
             self.skip_to_start(&ctl)?;
             if !self.decode_next_into_buf(&ctl)? {
                 return Ok(None);
@@ -3321,9 +3307,9 @@ impl zencodec::decode::AnimationFrameDecoder for NativeAnimationFrameDecoder {
 
     fn render_next_frame(
         &mut self,
-        stop: Option<&dyn enough::Stop>,
+        pulse: Option<&dyn zencodec::Pulse>,
     ) -> Result<Option<AnimationFrame<'_>>, At<zencodec::CodecError>> {
-        let Some(idx) = self.advance(stop).map_err(zencodec::CodecError::of)? else {
+        let Some(idx) = self.advance(pulse).map_err(zencodec::CodecError::of)? else {
             return Ok(None);
         };
 
@@ -3351,9 +3337,9 @@ impl zencodec::decode::AnimationFrameDecoder for NativeAnimationFrameDecoder {
 
     fn render_next_frame_owned(
         &mut self,
-        stop: Option<&dyn enough::Stop>,
+        pulse: Option<&dyn zencodec::Pulse>,
     ) -> Result<Option<OwnedAnimationFrame>, At<zencodec::CodecError>> {
-        let Some(idx) = self.advance(stop).map_err(zencodec::CodecError::of)? else {
+        let Some(idx) = self.advance(pulse).map_err(zencodec::CodecError::of)? else {
             return Ok(None);
         };
 
@@ -3381,10 +3367,10 @@ impl zencodec::decode::AnimationFrameDecoder for NativeAnimationFrameDecoder {
 
     fn render_next_frame_to_sink(
         &mut self,
-        stop: Option<&dyn enough::Stop>,
+        pulse: Option<&dyn zencodec::Pulse>,
         sink: &mut dyn zencodec::decode::DecodeRowSink,
     ) -> Result<Option<OutputInfo>, Self::Error> {
-        zencodec::helpers::copy_frame_to_sink(self, stop, sink)
+        zencodec::helpers::copy_frame_to_sink(self, pulse, sink)
     }
 }
 
@@ -3540,8 +3526,25 @@ fn report_probe_for_hint(mut info: ImageInfo, hint: OrientationHint) -> ImageInf
     info.with_orientation(Orientation::Identity)
 }
 
+/// A stored job pulse as the native layer takes it: the native requests check
+/// a pulse and a stop separately, so one value passed as both would be checked
+/// twice per poll. A pulse that can report is the native pulse and checks
+/// itself. One that never reports is only a stop: zencodec's deprecated
+/// `with_stop` wraps its token in `how_far::StopOnly`, so it polls exactly where
+/// the token did, and skipping its reports skips only counting work.
+fn native_controls(
+    pulse: Option<&how_far::SharedPulse>,
+) -> (Option<&dyn enough::Stop>, Option<&dyn how_far::Pulse>) {
+    match pulse {
+        Some(pulse) if how_far::Report::may_report(pulse) => (None, Some(pulse)),
+        Some(pulse) => (Some(pulse), None),
+        None => (None, None),
+    }
+}
+
+/// The job's and a call's cancellation, checked in that order.
 struct AnimationStops<'a> {
-    job: Option<&'a zencodec::StopToken>,
+    job: Option<&'a dyn enough::Stop>,
     call: Option<&'a dyn enough::Stop>,
 }
 impl enough::Stop for AnimationStops<'_> {
@@ -3742,7 +3745,9 @@ mod tests {
         let enc = WebpEncoderConfig::lossy();
         let output = enc
             .job()
-            .with_stop(zencodec::StopToken::new(enough::Unstoppable))
+            .with_pulse(how_far::SharedPulse::new(how_far::StopOnly::new(
+                enough::Unstoppable,
+            )))
             .encoder()
             .unwrap()
             .encode(buf.as_slice())
