@@ -1567,6 +1567,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 
 [[package]]
+name = "spin"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0134f9043ed38b087ac4f7d4af44c79e2c9e5094421fe3164f435ce585953b10"
+
+[[package]]
 name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2101,12 +2107,25 @@ dependencies = [
 
 [[package]]
 name = "zencodec"
-version = "0.1.27"
-source = "git+https://github.com/imazen/zencodec?rev=d327434b0826a3e39633665c76f5081c0ceb34cc#d327434b0826a3e39633665c76f5081c0ceb34cc"
+version = "0.1.26"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be4b0d4108a8f062c85090bf8d0e6dd00fea976ffacc0e4f3cb6b03284a75531"
+dependencies = [
+ "almost-enough",
+ "enough",
+ "whereat",
+ "zenpixels",
+]
+
+[[package]]
+name = "zencodec"
+version = "0.2.0"
+source = "git+https://github.com/imazen/zencodec?rev=e59b3803fc5b212bf4c92648ead4299c4ff0640a#e59b3803fc5b212bf4c92648ead4299c4ff0640a"
 dependencies = [
  "almost-enough",
  "enough",
  "how-far",
+ "spin",
  "whereat",
  "zenpixels",
 ]
@@ -2114,22 +2133,22 @@ dependencies = [
 [[package]]
 name = "zencodec-io"
 version = "0.1.0"
-source = "git+https://github.com/imazen/zencodec?rev=d327434b0826a3e39633665c76f5081c0ceb34cc#d327434b0826a3e39633665c76f5081c0ceb34cc"
+source = "git+https://github.com/imazen/zencodec?rev=e59b3803fc5b212bf4c92648ead4299c4ff0640a#e59b3803fc5b212bf4c92648ead4299c4ff0640a"
 dependencies = [
  "enough",
  "how-far",
- "zencodec",
+ "zencodec 0.2.0",
  "zenpixels",
 ]
 
 [[package]]
 name = "zencodec-testkit"
 version = "0.2.0"
-source = "git+https://github.com/imazen/zencodec?rev=d327434b0826a3e39633665c76f5081c0ceb34cc#d327434b0826a3e39633665c76f5081c0ceb34cc"
+source = "git+https://github.com/imazen/zencodec?rev=e59b3803fc5b212bf4c92648ead4299c4ff0640a#e59b3803fc5b212bf4c92648ead4299c4ff0640a"
 dependencies = [
  "enough",
  "whereat",
- "zencodec",
+ "zencodec 0.2.0",
  "zencodec-io",
  "zenpixels",
 ]
@@ -2192,7 +2211,7 @@ dependencies = [
  "safe_unaligned_simd",
  "thiserror",
  "whereat",
- "zencodec",
+ "zencodec 0.1.26",
  "zenflate",
  "zenpixels",
  "zenpixels-convert",
@@ -2327,7 +2346,7 @@ dependencies = [
  "zenanalyze",
  "zenanalyze-api",
  "zenbench",
- "zencodec",
+ "zencodec 0.2.0",
  "zencodec-io",
  "zencodec-testkit",
  "zenpixels",
