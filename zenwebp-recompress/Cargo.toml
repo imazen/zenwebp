@@ -31,7 +31,7 @@ zenwebp = { path = "..", default-features = false, features = ["std"] }
 # call site by switching to `B`/`codec_target()`: every constant in
 # `src/calibration/calib_tables.rs` is in absolute zensim-A score units.
 # See CHANGELOG 2026-08-29 and `src/measure.rs`.
-zensim = { git = "https://github.com/imazen/zensim", rev = "bab88fde6aae8aaf54f42767bc1272d90340c095", default-features = false, features = [
+zensim = { git = "https://github.com/imazen/zensimx", rev = "bab88fde6aae8aaf54f42767bc1272d90340c095", default-features = false, features = [
     "deprecated-profiles",
 ] }
 zenanalyze = { git = "https://github.com/imazen/zenanalyze", rev = "8ca647c525cf488c61bbf35475ca8ba3db6b628e", default-features = false }
