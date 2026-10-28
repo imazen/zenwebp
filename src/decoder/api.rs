@@ -1951,6 +1951,18 @@ fn decode_native_internal(
     Ok((pixels, w, h, decoder.has_alpha()))
 }
 
+/// YUV decodes refuse animated files, as libwebp's `WebPDecode` does: the
+/// planes would come from a composited canvas, not a frame's own YUV.
+/// [`AnimationDecoder`](crate::mux::AnimationDecoder) decodes frames.
+fn refuse_animation(decoder: &WebPDecoder<'_>) -> DecodeResult<()> {
+    if decoder.is_animated() {
+        return Err(at!(DecodeError::UnsupportedFeature(String::from(
+            "animated WebP: decode its frames with AnimationDecoder",
+        ))));
+    }
+    Ok(())
+}
+
 /// Decode WebP data to RGBA pixels (always 4 bytes per pixel).
 /// For lossless images with alpha, decodes directly to RGBA (no scratch buffer).
 /// For lossy/opaque images, decodes to native format then expands to RGBA.
@@ -2374,7 +2386,9 @@ pub fn decode_bgr_into(
 /// Decode WebP data to raw YUV 4:2:0 planes.
 ///
 /// For VP8 lossy images, returns the native YUV planes without upsampling.
-/// For VP8L lossless images, decodes to RGBA then converts to YUV.
+/// For VP8L lossless images, decodes to RGB, then converts with libwebp's
+/// encoder RGB->YUV import, as libwebp does after 1.6.0. Animated files are
+/// refused, as libwebp does.
 ///
 /// # Returns
 /// [`YuvPlanes`] containing separate Y, U, and V buffers.
@@ -2391,8 +2405,9 @@ fn decode_yuv420_with_config(data: &[u8], config: &DecodeConfig) -> DecodeResult
     let decoder =
         WebPDecoder::new_with_options_and_limits(data, config.to_options(), config.limits.clone())?;
     let alloc_pref = config.limits.alloc_pref;
+    refuse_animation(&decoder)?;
 
-    if decoder.is_lossy() && !decoder.is_animated() {
+    if decoder.is_lossy() {
         // For lossy images, extract the native YUV planes from the VP8 frame
         if let Some(range) = decoder.chunks.get(&WebPRiffChunk::VP8) {
             let data_slice = decoder.chunk_slice(range)?;
@@ -2448,10 +2463,21 @@ fn decode_yuv420_with_config(data: &[u8], config: &DecodeConfig) -> DecodeResult
         }
     }
 
-    // For lossless or animated images, decode to RGBA then convert to YUV
-    let (rgba, w, h) = decode_rgba(data)?;
-    let (y_bytes, u_bytes, v_bytes) =
-        super::yuv::convert_image_yuv::<4>(&rgba, w as u16, h as u16, w as usize);
+    // Lossless images: decode to RGB, then convert with the
+    // encoder's libwebp-exact RGB->YUV import. libwebp does the same since
+    // its fix for bug 432241412 ("Have lossless use ImportYUVAFromRGB",
+    // after 1.6.0): exact Y, YUV_FIX+2 gamma chroma, alpha ignored (no
+    // alpha-weighted chroma). Byte-exact with libwebp main on 897 lossless
+    // files, alpha included; 1.6.0 used an older conversion.
+    let (rgb, w, h) = DecodeRequest::new(config, data).decode_rgb()?;
+    let (y_bytes, u_bytes, v_bytes) = super::yuv::convert_image_yuv_fast(
+        &rgb,
+        crate::encoder::PixelLayout::Rgb8,
+        w as u16,
+        h as u16,
+        w as usize,
+        super::yuv::ChromaPrec::LibwebpExact,
+    );
 
     let uv_w = w.div_ceil(2);
     let uv_h = h.div_ceil(2);

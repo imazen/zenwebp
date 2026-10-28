@@ -332,6 +332,12 @@ impl<'a> WebPDemuxer<'a> {
 
         let max_pos = 8 + riff_size as u64; // RIFF header (8 bytes) + declared size
 
+        // libwebp's `ParseVP8XChunks` layout rules: image chunks outside an
+        // ANMF are refused in an animation or after an ANIM, and an ANMF
+        // must follow an ANIM.
+        let mut seen_anim = false;
+        let layout_error = |what: &str| at!(MuxError::InvalidFormat(what.into()));
+
         // Scan all chunks
         while r.position() + 8 <= max_pos && (r.position() as usize) + 8 <= data.len() {
             let chunk_start = r.position() as usize;
@@ -346,6 +352,20 @@ impl<'a> WebPDemuxer<'a> {
             let payload_start = r.position() as usize;
             let next_pos = next_chunk_pos(chunk_start, size);
 
+            match &fourcc {
+                b"VP8 " | b"VP8L" | b"ALPH" if is_animated || seen_anim => {
+                    return Err(layout_error(
+                        "image chunk outside an ANMF frame in an animation",
+                    ));
+                }
+                b"ANMF" if is_animated && !seen_anim => {
+                    return Err(layout_error("ANMF chunk before the ANIM chunk"));
+                }
+                _ => {}
+            }
+            if &fourcc == b"ANIM" {
+                seen_anim = true;
+            }
             match &fourcc {
                 b"ICCP" if has_icc => {
                     let end = payload_start
@@ -436,6 +456,14 @@ impl<'a> WebPDemuxer<'a> {
             if r.seek_from_start(next_pos).is_err() {
                 break;
             }
+        }
+
+        // A complete file must hold a frame (`IsValidExtendedFormat`).
+        if is_animated && demuxer.frames.is_empty() {
+            return Err(layout_error("animation without frames"));
+        }
+        if !is_animated && demuxer.single_bitstream_range.is_none() {
+            return Err(layout_error("extended file without an image"));
         }
 
         // Every recorded ANMF must parse: `frames()` yields `DemuxFrame`s

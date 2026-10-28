@@ -2,6 +2,9 @@
 //!
 //! Each function takes raw WebP bytes and returns decoded pixels + dimensions.
 //! For more control (dithering, upsampling, limits), use [`DecodeRequest`](crate::DecodeRequest).
+//! For an animated file, the pixel decodes return the first frame and
+//! `decode_yuv420` refuses it; decode frames with
+//! [`AnimationDecoder`](crate::mux::AnimationDecoder).
 //!
 //! # Example
 //!

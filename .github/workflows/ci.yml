@@ -132,12 +132,14 @@ jobs:
           key: cross-i686
       - name: Prefetch codec-corpus datasets on the host
         # The cross container cannot fetch datasets; every corpus a test
-        # reads must be cached here first (webp-conformance, CID22-512).
+        # reads must be cached here first (webp-conformance, CID22-512,
+        # imageflow/test_inputs).
         env:
           CODEC_CORPUS_CACHE: ${{ github.workspace }}/.corpus-cache
         run: |
           cargo test --features inventory --test inventory corpus_webp_conformance_valid -- --exact
           cargo test --test v2_pixel_perfect cat1_roundtrip_corpus_cid22 -- --exact
+          cargo test --test lossless_yuv lossless_yuv_matches_libwebp_main_on_corpus -- --exact
       - name: Run tests (i686)
         # Mount the zenanalyze sibling at /zenanalyze inside the cross
         # container, since cross sets WORKDIR=/project and `../zenanalyze`

@@ -85,10 +85,11 @@ test-armv7: corpus-prefetch
     CROSS_CONTAINER_OPTS="-v $HOME/.cache/codec-corpus:/codec-corpus/codec-corpus" CODEC_CORPUS_CACHE=/codec-corpus cross test --features "std,pixel-types" --target armv7-unknown-linux-gnueabihf
 
 # The cross containers cannot fetch codec-corpus datasets; cache every one a
-# test reads on the host first (the same two the i686 CI job prefetches).
+# test reads on the host first (the same ones the i686 CI job prefetches).
 corpus-prefetch:
     cargo test --features inventory --test inventory corpus_webp_conformance_valid -- --exact
     cargo test --test v2_pixel_perfect cat1_roundtrip_corpus_cid22 -- --exact
+    cargo test --test lossless_yuv lossless_yuv_matches_libwebp_main_on_corpus -- --exact
 
 # Cross-test all non-native targets
 test-cross: test-i686 test-armv7
@@ -166,6 +167,9 @@ metadata-portability:
     cargo check --manifest-path fuzz/Cargo.toml --bin inventory
     just api-doc
 
+# Semver check against 0.4.4 at patch level. main is the breaking 0.5 line,
+# so this fails by design until it is re-baselined at the 0.5 release
+# (user decision 2026-10-25).
 metadata-api-check:
     #!/usr/bin/env bash
     set -euo pipefail
