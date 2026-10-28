@@ -32,10 +32,13 @@ pub(crate) enum InternalDecodeError {
     /// Chroma prediction mode invalid
     #[allow(dead_code)]
     ChromaPredictionModeInvalid = 6,
-    /// Decoding was cancelled via a cooperative stop token
+    /// A cooperative stop token reported [`enough::StopReason::Cancelled`]
+    /// (or a reason this crate does not know yet)
     Cancelled = 7,
     /// An intermediate allocation would exceed `Limits::max_memory`
     MemoryLimitExceeded = 8,
+    /// A cooperative stop token reported [`enough::StopReason::TimedOut`]
+    TimedOut = 9,
 }
 
 impl From<InternalDecodeError> for DecodeError {
@@ -60,14 +63,19 @@ impl From<InternalDecodeError> for DecodeError {
                 DecodeError::ChromaPredictionModeInvalid(0)
             }
             InternalDecodeError::Cancelled => DecodeError::Cancelled(enough::StopReason::Cancelled),
+            InternalDecodeError::TimedOut => DecodeError::Cancelled(enough::StopReason::TimedOut),
             InternalDecodeError::MemoryLimitExceeded => DecodeError::MemoryLimitExceeded,
         }
     }
 }
 
+/// Each reason keeps its own variant, so the one-byte error still carries it.
 impl From<enough::StopReason> for InternalDecodeError {
-    fn from(_reason: enough::StopReason) -> Self {
-        Self::Cancelled
+    fn from(reason: enough::StopReason) -> Self {
+        match reason {
+            enough::StopReason::TimedOut => Self::TimedOut,
+            _ => Self::Cancelled,
+        }
     }
 }
 
