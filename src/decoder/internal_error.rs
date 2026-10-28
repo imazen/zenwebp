@@ -70,3 +70,21 @@ impl From<enough::StopReason> for InternalDecodeError {
         Self::Cancelled
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use enough::StopReason;
+
+    /// A stop's reason survives the round trip through the hot-path error.
+    #[test]
+    fn stop_reasons_survive_the_internal_error() {
+        for reason in [StopReason::Cancelled, StopReason::TimedOut] {
+            let error = DecodeError::from(InternalDecodeError::from(reason));
+            assert!(
+                matches!(error, DecodeError::Cancelled(r) if r == reason),
+                "{reason:?} became {error:?}"
+            );
+        }
+    }
+}
