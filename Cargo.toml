@@ -61,7 +61,7 @@ rgb = { version = "0.8", optional = true, default-features = false, features = [
 imgref = { version = "1.12", optional = true, default-features = false }
 zensim = { version = "0.2", optional = true }
 # Private experimental runtime: leave the calibrated legacy scorer untouched.
-zensim-candidate = { package = "zensim", version = "0.3.0", git = "https://github.com/imazen/zensim", rev = "6c7c14a300ace3b0e1631b754faf8bd99aebbcdf", optional = true, default-features = false, features = ["custom-profiles", "feature-regime-v2"] }
+zensim-candidate = { package = "zensim", version = "0.3.0", git = "https://github.com/imazen/zensimx", rev = "6c7c14a300ace3b0e1631b754faf8bd99aebbcdf", optional = true, default-features = false, features = ["custom-profiles", "feature-regime-v2"] }
 zenpredict-serving = { package = "zenpredict", version = "0.2.0", git = "https://github.com/imazen/zenanalyze", rev = "05de3cbc44b19d8769077d99710b0146c761d6df", optional = true }
 # `zenanalyze-api` — the version-unifying feature contract (`Offer`, `Request`,
 # `Select`) and this crate's INTERCHANGE BOUNDARY, so a host on any `zenanalyze`

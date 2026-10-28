@@ -2262,7 +2262,7 @@ dependencies = [
 [[package]]
 name = "zensim"
 version = "0.3.0"
-source = "git+https://github.com/imazen/zensim?rev=6c7c14a300ace3b0e1631b754faf8bd99aebbcdf#6c7c14a300ace3b0e1631b754faf8bd99aebbcdf"
+source = "git+https://github.com/imazen/zensimx?rev=6c7c14a300ace3b0e1631b754faf8bd99aebbcdf#6c7c14a300ace3b0e1631b754faf8bd99aebbcdf"
 dependencies = [
  "archmage",
  "bytemuck",
