@@ -1049,6 +1049,16 @@ is essentially the current implementation.
 
 ## Known Bugs
 
+- PR105 zencodec 0.2 Pulse (fixed 2026-10-28). A `with_pulse` job stored the pulse
+  plus `StopToken::new(pulse)`, and the native `WithStop` checked it twice per poll
+  (run 52 on PR 105's head: lossy decode 11 polls against the legacy token's 6).
+  `native_controls` now hands the native layer a pulse that can report as its pulse
+  and one that cannot (`StopOnly`, so every legacy `with_stop`) as its stop.
+  Separately, `InternalDecodeError` dropped the stop reason, so a timeout at a VP8
+  row or VP8L block check came back `Cancelled`; it keeps `TimedOut` now. Gates:
+  `tests/pulse_polls.rs` (builds against either zencodec, so it runs on an old
+  head), `tests/pulse_calls.rs`, `tests/stop_reasons.rs`.
+
 - PR105 timestamp compatibility: native timestamp parameters and decoded frame
   fields retain u32. Differences, cumulative decode time and final-frame end
   use wide checked arithmetic; unrepresentable time refuses instead of wrapping

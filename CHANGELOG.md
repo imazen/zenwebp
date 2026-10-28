@@ -11,11 +11,15 @@ earlier history lives in git log and LOG.md.)
 
 ### QUEUED BREAKING CHANGES
 
-(none queued by these entries; PR #105's unreleased `*_with_stop` methods became the `*_with_pulse` methods below)
+- zencodec 0.2 (operation Pulse): the jobs implement the required `with_pulse`, the animation calls take
+  `Option<&dyn zencodec::Pulse>`, and the incremental decoder's `step` takes `&dyn zencodec::Pulse`. zenwebp requires
+  zencodec `>=0.2.0` (`4827b8bb`, `39a79f98`).
+
+(PR #105's unreleased native `*_with_stop` methods became the `*_with_pulse` methods below.)
 
 ### Added
 
-- how-far adoption: cancellation plus approximate progress through one `how_far::Pulse`. Native: `EncodeRequest::with_pulse` (percent, total 100), `DecodeRequest::pulse` / `WebPDecoder::set_pulse` (image rows; frames for `read_frame`), `AnimationDecoder::set_pulse` (frames), and per-call `WebPDecoder::read_frame_with_pulse`, `AnimationDecoder::decode_next_with_pulse`, `AnimationEncoder::add_frame_with_pulse` / `add_frame_advanced_with_pulse`. zencodec: `WebpDecodeJob::with_pulse` / `WebpEncodeJob::with_pulse` override the stop-only default (rows / percent / frames). VP8 decode now checks cancellation once per macroblock row on every path (it used to check only at entry for still decodes). `Pulse`, `StopOnly` and `NoPulse` are re-exported. Units and cancellation pinned by `tests/how_far_pulse.rs`; mutation-checked (removing each reporting site or the VP8 row check fails 1-4 of its 7 tests).
+- how-far adoption: cancellation plus approximate progress through one `how_far::Pulse`. Native: `EncodeRequest::with_pulse` (percent, total 100), `DecodeRequest::pulse` / `WebPDecoder::set_pulse` (image rows; frames for `read_frame`), `AnimationDecoder::set_pulse` (frames), and per-call `WebPDecoder::read_frame_with_pulse`, `AnimationDecoder::decode_next_with_pulse`, `AnimationEncoder::add_frame_with_pulse` / `add_frame_advanced_with_pulse`. zencodec: `WebpDecodeJob::with_pulse` / `WebpEncodeJob::with_pulse` (required by zencodec 0.2, whose deprecated `with_stop` wraps its token in `StopOnly`) report rows / percent / frames to a pulse that can report. VP8 decode now checks cancellation once per macroblock row on every path (it used to check only at entry for still decodes). `Pulse`, `StopOnly` and `NoPulse` are re-exported. Units and cancellation pinned by `tests/how_far_pulse.rs`; mutation-checked (removing each reporting site or the VP8 row check fails 1-4 of its 7 tests).
 - Incremental (sans-I/O) decode: `dyn_incremental_decoder` wraps
   `zencodec::helpers::WholeFileIncremental` with resource admission and `DecodeCapabilities::incremental`
   is declared, so the zencodec-io drivers (files, streams, async sources) serve
@@ -26,6 +30,8 @@ earlier history lives in git log and LOG.md.)
 
 ### Fixed
 
+- A zencodec job given a pulse checked it twice per native poll: `with_pulse` stored the pulse and a `StopToken` wrapping it, and the native layer checks a pulse and a stop separately. The native layer now gets a pulse that can report as its pulse, and one that cannot (zencodec's deprecated `with_stop` adapter) as its stop, so legacy callers poll exactly where their token did. On the previous adapter `tests/pulse_polls.rs` measured a lossy decode at 11 polls against the legacy token's 6, three animation renders at 193 against 99, and a lossy encode at 56 against 24 (`39a79f98`).
+- A timeout raised at a VP8 macroblock-row or VP8L block cancellation check came back as `Cancelled`: the decoder's one-byte internal error dropped the stop's reason. It keeps `TimedOut` now (`add61c86`); `stop_reasons_survive_the_internal_error` and `tests/stop_reasons.rs` fail without it (`9d308213`).
 - A single animation frame smaller than the canvas, or offset, was collapsed into a still of the frame's own size, losing the canvas and offset (a 2x2 frame at (2, 2) on a 6x4 canvas came out as a 2x2 image). `WebPMux::downgrade_single_frame_to_static` now applies only to a full-canvas frame at (0, 0), as libwebp's mux does. One full-canvas frame is still written as a still image by both `AnimationEncoder::finalize` and the zencodec animation encoder (#11), byte-identical to the still encoder (`tests/animation_libwebp_oracle.rs::single_frame_animation_encodes_as_still`). `single_subframe_animation_keeps_its_canvas` in `tests/mux_tests.rs` and `tests/animation_libwebp_oracle.rs` (libwebp reader) fails without the fix.
 - `test_scraped_webp_corpus` (ignored; 12,825 real-world files on dev) compared animated files through libwebp's still API, which rejects them, so they counted as "lib fail" and were never checked. Animations are now compared frame by frame (pixels and durations) against `WebPAnimDecoder`, and the test also fails when only one side decodes a file. Run on dev before this change: 12,823/12,825 exact, the 2 skipped files were these animations.
 - `inventory`: chunks of an incomplete VP8X file that `read_data` rejects with `ChunkMissing` were labelled "decoder rejects this file", but `probe()` still answers from the VP8X canvas header there and attaches `detect::probe`'s `WebPProbe`, which reads the ICCP, bitstream header and last VP8X. Those parts now name that reader. The both-directions overwrite harness had been failing with 108 such cases; it passes (20k inputs, and 100k each on two more seeds) and now runs in CI.
@@ -69,6 +75,8 @@ earlier history lives in git log and LOG.md.)
 
 ### Dependency integration
 
+- The zencodec 0.2 family at `e59b3803` in the root, fuzz and recompress graphs (`4827b8bb`). The root graph also keeps registry zencodec 0.1.26 for the zenpng 0.1.4 dev-dependency, which dev tools use only to decode PNG. The zensim git dependency points at imazen/zensimx, the renamed repository (`33b75d37`, from main `2495c7e5`).
+
 - Align the root codec, I/O driver and testkit source with zencodec `802952b7`; provide a reproducible rustdoc-JSON semver check for unpublished root patches.
 - Align root, fuzz and recompress locks with the separate metadata-channel probes in zencodec `d327434b`; add locked standalone gates and an assertion that every shared-interface package uses that same source.
 
@@ -76,6 +84,8 @@ earlier history lives in git log and LOG.md.)
 
 
 ### Tests
+
+- `tests/pulse_polls.rs` (builds against either zencodec): for a legacy token, a pulse that cannot report and one that can, every operation polls once per checkpoint, never loses cancellation, and a reporting pulse keeps its reports (`f39c12c7`). `tests/pulse_calls.rs`: a call's pulse and the job's pulse each stop every animation call (`f39c12c7`). `tests/stop_reasons.rs`: every native decode poll keeps a timeout's reason (`9d308213`).
 
 - Exercise unchanged shared `check_all`, fixture pixels and structural header boundaries, slice/read-at/pull/first-frame parity with preferred formats, typed admission and exact-cap EOF, and independent libwebp readback of structured orientation.
 
