@@ -512,6 +512,8 @@ required-features = ["_dev"]
 # still resolves to a single source and the `Offer` types unify. Delete this
 # block once zenanalyze-api 0.1.1 / zenanalyze 0.2.x are published.
 [patch.crates-io]
+# PNG strip compression requires this tested source; dependency patches do not propagate.
+zenflate = { git = "https://github.com/imazen/zenflate", rev = "a0ea03637a2cc9a193e343018ae2cfb1a6c31edd" }
 zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "feb09f9fd25e90e49a30d7161db8f3b558dfb2a6" }
 zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "feb09f9fd25e90e49a30d7161db8f3b558dfb2a6" }
 zenmeta = { git = "https://github.com/imazen/zencodec", rev = "feb09f9fd25e90e49a30d7161db8f3b558dfb2a6" }
