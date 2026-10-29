@@ -22,3 +22,8 @@ Qualification: four new controls, all 51 existing codec tests and strict Clippy
 pass on ARM64. The baseline reproduces begin refusal and padded-row divergence.
 Original assertions and native codec algorithms are unchanged. See the
 [full receipt and limits](../benchmarks/declared_rows_2026-10-29.md).
+
+Rust 1.99 CI subsequently flagged `chunks_exact(3)` in the new oracle fixture.
+The test now uses `as_chunks::<3>().0.iter()` with the same sample mapping and
+assertions. The focused ARM run used Rust 1.96 and did not expose that newer
+lint. Native library source is unchanged by this correction.

@@ -38,7 +38,9 @@ fn declared_rows_preserve_strided_pixels_and_protocol() {
             assert_eq!((ow, oh), (w, h));
             if lossy == 0 {
                 let rgba: Vec<u8> = packed
-                    .chunks_exact(3)
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
                     .flat_map(|p| [p[0], p[1], p[2], 255])
                     .collect();
                 assert_eq!(decoded, rgba);
