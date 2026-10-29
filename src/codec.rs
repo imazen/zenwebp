@@ -788,6 +788,7 @@ impl zencodec::encode::EncodeJob for WebpEncodeJob {
             limits: self.limits,
             canvas_size: self.canvas_size,
             stream: None,
+            declaration: None,
         })
     }
 
@@ -853,6 +854,7 @@ enum StreamAccum {
         layout: PixelLayout,
         width: u32,
         total_rows: u32,
+        descriptor: PixelDescriptor,
     },
 }
 
@@ -873,6 +875,7 @@ pub struct WebpEncoder {
     limits: ResourceLimits,
     canvas_size: Option<(u32, u32)>,
     stream: Option<StreamAccum>,
+    declaration: Option<(u32, u32, PixelDescriptor)>,
 }
 
 impl WebpEncoder {
@@ -1078,6 +1081,11 @@ impl zencodec::encode::Encoder for WebpEncoder {
     }
 
     fn encode(mut self, pixels: PixelSlice<'_>) -> Result<EncodeOutput, At<zencodec::CodecError>> {
+        if self.declaration.is_some() || self.stream.is_some() {
+            return Err(zencodec::CodecError::of(at!(
+                EncodeError::InvalidBufferSize("one-shot encode after row encoding started".into())
+            )));
+        }
         self.describe_stored_f32(pixels.descriptor());
         let (buf, layout, w, h, stride) =
             pixels_to_webp_input(&pixels).map_err(zencodec::CodecError::of)?;
@@ -1085,30 +1093,130 @@ impl zencodec::encode::Encoder for WebpEncoder {
             .map_err(zencodec::CodecError::of)
     }
 
+    fn begin(
+        &mut self,
+        width: u32,
+        height: u32,
+        descriptor: PixelDescriptor,
+    ) -> Result<zencodec::encode::OutputTiming, Self::Error> {
+        if self.declaration.is_some() || self.stream.is_some() {
+            return Err(zencodec::CodecError::of(at!(
+                EncodeError::InvalidBufferSize("row encoding already started".into())
+            )));
+        }
+        if width == 0 || height == 0 || width > 16384 || height > 16384 {
+            return Err(zencodec::CodecError::of(at!(
+                EncodeError::InvalidDimensions
+            )));
+        }
+        if !ENCODE_DESCRIPTORS.contains(&descriptor) {
+            return Err(Self::reject(UnsupportedOperation::RowLevelEncode));
+        }
+        self.limits.check_dimensions(width, height).map_err(|e| {
+            zencodec::CodecError::of(at!(EncodeError::LimitExceeded(
+                e.kind(),
+                alloc::format!("{e}")
+            )))
+        })?;
+        if let Some(pulse) = self.pulse.as_ref() {
+            enough::Stop::check(pulse)
+                .map_err(|e| zencodec::CodecError::of(at!(EncodeError::from(e))))?;
+        }
+        // Admission is allocation-free and refusal leaves the owner unchanged.
+        self.declaration = Some((width, height, descriptor));
+        self.canvas_size = Some((width, height));
+        Ok(zencodec::encode::OutputTiming::AT_FINISH)
+    }
+
     fn push_rows(&mut self, rows: PixelSlice<'_>) -> Result<(), At<zencodec::CodecError>> {
+        let bad_rows = || {
+            zencodec::CodecError::of(at!(EncodeError::InvalidBufferSize(
+                "rows do not match the declared canvas or prior strips".into()
+            )))
+        };
         let strip_h = rows.rows();
+        if let Some(pulse) = self.pulse.as_ref() {
+            enough::Stop::check(pulse)
+                .map_err(|e| zencodec::CodecError::of(at!(EncodeError::from(e))))?;
+        }
+        let previous = match &self.stream {
+            Some(StreamAccum::Raw {
+                width,
+                total_rows,
+                descriptor,
+                ..
+            }) => {
+                if *width != rows.width() || *descriptor != rows.descriptor() {
+                    return Err(bad_rows());
+                }
+                *total_rows
+            }
+            None => 0,
+        };
+        let total = previous.checked_add(strip_h).ok_or_else(bad_rows)?;
+        if rows.width() == 0 || rows.width() > 16384 || total > 16384 {
+            return Err(zencodec::CodecError::of(at!(
+                EncodeError::InvalidDimensions
+            )));
+        }
+        if let Some((width, height)) = self.canvas_size
+            && (width != rows.width() || total > height)
+        {
+            return Err(bad_rows());
+        }
+        if let Some((_, _, descriptor)) = self.declaration
+            && descriptor != rows.descriptor()
+        {
+            return Err(bad_rows());
+        }
+        self.limits
+            .check_dimensions(rows.width(), total)
+            .map_err(|e| {
+                zencodec::CodecError::of(at!(EncodeError::LimitExceeded(
+                    e.kind(),
+                    alloc::format!("{e}")
+                )))
+            })?;
         if strip_h == 0 {
             return Ok(());
         }
-        self.describe_stored_f32(rows.descriptor());
-        // Each strip is converted to the layout `encode` would use;
-        // `finish` encodes the accumulated rows exactly as `encode` does.
-        let (buf, layout, _, _, _) =
+        let (buf, layout, width, _, stride_pixels) =
             pixels_to_webp_input(&rows).map_err(zencodec::CodecError::of)?;
-        let canvas = self.canvas_size;
+        let row_bytes = width as usize * layout.bytes_per_pixel();
+        let append_bytes = row_bytes
+            .checked_mul(strip_h as usize)
+            .ok_or_else(bad_rows)?;
+        self.limits
+            .check_memory(row_bytes as u64 * total as u64)
+            .map_err(|e| {
+                zencodec::CodecError::of(at!(EncodeError::LimitExceeded(
+                    e.kind(),
+                    alloc::format!("{e}")
+                )))
+            })?;
         let StreamAccum::Raw {
             pixels, total_rows, ..
-        } = self.stream.get_or_insert_with(|| {
-            let (cw, ch) = canvas.unwrap_or((rows.width(), 0));
-            StreamAccum::Raw {
-                pixels: Vec::with_capacity(cw as usize * ch as usize * layout.bytes_per_pixel()),
-                layout,
-                width: cw,
-                total_rows: 0,
-            }
+        } = self.stream.get_or_insert_with(|| StreamAccum::Raw {
+            pixels: Vec::new(),
+            layout,
+            width,
+            total_rows: 0,
+            descriptor: rows.descriptor(),
         });
-        pixels.extend_from_slice(&buf);
-        *total_rows += strip_h;
+        pixels.try_reserve(append_bytes).map_err(|_| {
+            zencodec::CodecError::of(at!(EncodeError::LimitExceeded(
+                zencodec::LimitKind::Memory,
+                "row accumulation allocation failed".into()
+            )))
+        })?;
+        // Native input stride is in pixels; only visible bytes belong to the
+        // packed accumulator. Strip padding must never become image samples.
+        let stride = stride_pixels * layout.bytes_per_pixel();
+        for y in 0..strip_h as usize {
+            pixels.extend_from_slice(&buf[y * stride..y * stride + row_bytes]);
+        }
+        *total_rows = total;
+        self.describe_stored_f32(rows.descriptor());
         Ok(())
     }
 
@@ -1123,9 +1231,18 @@ impl zencodec::encode::Encoder for WebpEncoder {
                 layout,
                 width,
                 total_rows,
-            } => self
-                .do_encode(&pixels, layout, width, total_rows, width as usize)
-                .map_err(zencodec::CodecError::of),
+                ..
+            } => {
+                if let Some((_, height)) = self.canvas_size
+                    && height != total_rows
+                {
+                    return Err(zencodec::CodecError::of(at!(
+                        EncodeError::InvalidBufferSize("incomplete declared canvas".into())
+                    )));
+                }
+                self.do_encode(&pixels, layout, width, total_rows, width as usize)
+                    .map_err(zencodec::CodecError::of)
+            }
         }
     }
 }

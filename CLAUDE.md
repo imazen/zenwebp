@@ -1141,3 +1141,12 @@ still would lose the canvas and offset. Animation output remains buffered until 
 Pixel bytes with non-sRGB descriptors must keep ICC context: accepting them
 as sRGB would silently alter their interpretation. Decode errors after entry
 poison animation state until reset.
+
+## Known Bugs: shared row admission and padding (2026-10-29)
+
+The shared encoder inherited a refusing `begin` despite implementing `push_rows`.
+Its row accumulator also appended strided padding as samples. The current repair
+adds allocation-free canvas admission, strip/protocol validation and copies only
+visible rows. PixelSlice rejects strides not divisible by pixel size before adapter entry. `just declared-rows-check` exercises these routes;
+qualification is recorded in `docs/declared-rows.md`. This remains full-raster
+buffering with AT_FINISH output, not a low-memory streaming guarantee.

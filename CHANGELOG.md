@@ -5,6 +5,8 @@ earlier history lives in git log and LOG.md.)
 
 ## [Unreleased]
 
+- Restore shared declared row encoding and preserve strided samples; validate canvas/strip protocol and retain AT_FINISH buffering. See `docs/declared-rows.md`.
+
 - Source migration for the shared optional per-call Pulse contract: bounded whole-file decoding forwards `None` unchanged and retains job cancellation. Retained cancellation, supplied control polling and incremental parity controls pass against the paired core revision; see `docs/optional-pulse.md` for qualification scope (`d21253c3`, `6cba688f`).
 
 ### Changed

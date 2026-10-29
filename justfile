@@ -281,3 +281,9 @@ beta-cohort-check:
     cargo fmt --check
     cargo clippy --locked --workspace --lib -- -D warnings
     cargo test --locked --workspace --lib --no-fail-fast
+
+# Declared row protocol, byte-stride parity and the existing codec controls.
+declared-rows-check:
+    cargo test --locked --test declared_rows
+    cargo test --locked --lib codec::tests::
+    cargo clippy --locked --lib --test declared_rows -- -D warnings
