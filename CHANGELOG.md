@@ -5,6 +5,8 @@ earlier history lives in git log and LOG.md.)
 
 ## [Unreleased]
 
+- Source migration for the shared optional per-call Pulse contract: bounded whole-file decoding forwards `None` unchanged and retains job cancellation. Retained cancellation, supplied control polling and incremental parity controls pass against the paired core revision; see `docs/optional-pulse.md` for qualification scope (`d21253c3`, `6cba688f`).
+
 ### Changed
 
 - Admit archmage/magetypes 0.9.31-beta.1 alongside compatible stable versions; use explicit-token aliases where needed. Formatting, strict library lint and library tests pass (`ab50d43c`).
@@ -12,7 +14,7 @@ earlier history lives in git log and LOG.md.)
 ### QUEUED BREAKING CHANGES
 
 - zencodec 0.2 (operation Pulse): the jobs implement the required `with_pulse`, the animation calls take
-  `Option<&dyn zencodec::Pulse>`, and the incremental decoder's `step` takes `&dyn zencodec::Pulse`. zenwebp requires
+  `Option<&dyn zencodec::Pulse>`, and the incremental decoder's `step` takes `Option<&dyn zencodec::Pulse>`. zenwebp requires
   zencodec `>=0.2.0` (`4827b8bb`, `39a79f98`).
 
 (PR #105's unreleased native `*_with_stop` methods became the `*_with_pulse` methods below.)

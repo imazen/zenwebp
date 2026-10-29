@@ -35,7 +35,7 @@ zensim = { git = "https://github.com/imazen/zensimx", rev = "bab88fde6aae8aaf54f
     "deprecated-profiles",
 ] }
 zenanalyze = { git = "https://github.com/imazen/zenanalyze", rev = "8ca647c525cf488c61bbf35475ca8ba3db6b628e", default-features = false }
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "8d8dee412702b40f1d01d398a018074a2b6de5e9", default-features = false }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "283655c5424e0ad7ebc6d2acd94670fac1e29158", default-features = false }
 
 enough = { version = "0.4", default-features = false, features = ["std"] }
 thiserror = { version = "2.0", default-features = false }
@@ -123,6 +123,6 @@ zenwebp = { workspace = true, features = ["std"] }
 # Keep the unpublished contract revision aligned with the root: the zencodec 0.2 family.
 [patch.crates-io]
 # Merged pixel-context bridge; keep root, fuzz and recompress on one revision.
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "8d8dee412702b40f1d01d398a018074a2b6de5e9" }
-zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "8d8dee412702b40f1d01d398a018074a2b6de5e9" }
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "e59b3803fc5b212bf4c92648ead4299c4ff0640a" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "283655c5424e0ad7ebc6d2acd94670fac1e29158" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "283655c5424e0ad7ebc6d2acd94670fac1e29158" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "feb09f9fd25e90e49a30d7161db8f3b558dfb2a6" }
