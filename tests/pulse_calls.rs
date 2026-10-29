@@ -243,3 +243,44 @@ fn call_and_job_pulses_each_stop_the_animation_decoder() {
         }
     }
 }
+
+/// A missing/no-op call control must not replace the retained native job control.
+#[test]
+fn incremental_calls_keep_retained_cancellation_with_optional_control() {
+    use zencodec::CodecErrorExt;
+    use zencodec::decode::StepError;
+    use zencodec_io::{CollectSink, DriveError, drive_from_slice};
+
+    let data = include_bytes!("images/regression/tiny.webp");
+    for reports in [false, true] {
+        for (job_on, call_on, reason) in CASES {
+            let job = Switch::new(StopReason::TimedOut, reports);
+            let call = Switch::new(StopReason::Cancelled, false);
+            let pulse = call_on.map(|_| &*call as &dyn zencodec::Pulse);
+            let mut decoder = WebpDecoderConfig::new()
+                .job()
+                .with_pulse(SharedPulse::new(Arc::clone(&job)))
+                .dyn_incremental_decoder(&[])
+                .unwrap();
+            job.set(job_on);
+            call.set(call_on == Some(true));
+            let mut sink = CollectSink::new();
+            let result = drive_from_slice(&mut *decoder, data, &mut sink, pulse, 7);
+            let outcome = result.map(|_| ()).map_err(|error| match error {
+                DriveError::Step(StepError::Cancelled(reason)) => ErrorCategory::Stopped(reason),
+                DriveError::Step(StepError::Codec(error)) => {
+                    error.error_category().expect("native category")
+                }
+                other => panic!("unexpected incremental failure: {other:?}"),
+            });
+            assert_eq!(outcome, expected(reason));
+            if reason.is_some() {
+                assert!(sink.descriptor().is_none());
+                assert!(sink.bytes().is_empty());
+            } else {
+                assert!(sink.finished());
+                assert!(!sink.bytes().is_empty());
+            }
+        }
+    }
+}

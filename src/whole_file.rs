@@ -66,9 +66,9 @@ where
         &mut self,
         input: Input<'_>,
         sink: &mut dyn DecodeRowSink,
-        pulse: &dyn zencodec::Pulse,
+        pulse: Option<&dyn zencodec::Pulse>,
     ) -> Result<Progress, StepError<Self::Error>> {
-        enough::Stop::check(pulse)?;
+        enough::Stop::check(pulse.unwrap_or(&zencodec::NoPulse))?;
         // A length hint applies to the source, independently of the offered
         // window. Reject it before the shared adapter requests offset zero.
         let bytes = input.total_len.unwrap_or(0).max(input.bytes.len() as u64);

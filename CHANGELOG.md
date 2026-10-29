@@ -5,6 +5,8 @@ earlier history lives in git log and LOG.md.)
 
 ## [Unreleased]
 
+- Source migration for the shared optional per-call Pulse contract: bounded whole-file decoding forwards `None` unchanged and retains job cancellation. New cancellation controls are prepared; qualification against the paired core revision is pending.
+
 ### Changed
 
 - Admit archmage/magetypes 0.9.31-beta.1 alongside compatible stable versions; use explicit-token aliases where needed. Formatting, strict library lint and library tests pass (`ab50d43c`).
