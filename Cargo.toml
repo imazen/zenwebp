@@ -71,8 +71,7 @@ zenpredict-serving = { package = "zenpredict", version = "0.2.0", git = "https:/
 # Declared as a crates.io VERSION, never a git rev: a registry dep and a git dep
 # are different Cargo sources, and two git deps at different revs are too —
 # either way a consumer ends up with two `Offer` types that don't interconvert.
-# Unreleased contract changes come in through the single `[patch.crates-io]
-zenpng = { git = "https://github.com/imazen/zenpng", rev = "7b6d1436db5d771fc43226c146847fc76305afde" }`
+# Unreleased contract changes come in through the single `[patch.crates-io]`
 # below, which rewrites this entry and KEEPS unification.
 zenanalyze-api = { version = "0.1.0", optional = true, default-features = false }
 # zenanalyze rides `analyzer` unconditionally: it is what `classify_image_type_rgb8`
@@ -513,6 +512,11 @@ required-features = ["_dev"]
 # still resolves to a single source and the `Offer` types unify. Delete this
 # block once zenanalyze-api 0.1.1 / zenanalyze 0.2.x are published.
 [patch.crates-io]
+zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "feb09f9fd25e90e49a30d7161db8f3b558dfb2a6" }
+zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "feb09f9fd25e90e49a30d7161db8f3b558dfb2a6" }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "feb09f9fd25e90e49a30d7161db8f3b558dfb2a6" }
+zenpng = { git = "https://github.com/imazen/zenpng", rev = "7b6d1436db5d771fc43226c146847fc76305afde" }
+
 # Merged pixel-context bridge; keep root, fuzz and recompress on one revision.
 zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "283655c5424e0ad7ebc6d2acd94670fac1e29158" }
 zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "283655c5424e0ad7ebc6d2acd94670fac1e29158" }

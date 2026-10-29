@@ -21,9 +21,9 @@ version = ">=0.2.0, <0.3.0"
 # released zencodec before releasing.
 [patch.crates-io]
 # Merged pixel-context bridge; keep root, fuzz and recompress on one revision.
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "8d8dee412702b40f1d01d398a018074a2b6de5e9" }
-zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "8d8dee412702b40f1d01d398a018074a2b6de5e9" }
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "e59b3803fc5b212bf4c92648ead4299c4ff0640a" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "283655c5424e0ad7ebc6d2acd94670fac1e29158" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "283655c5424e0ad7ebc6d2acd94670fac1e29158" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "feb09f9fd25e90e49a30d7161db8f3b558dfb2a6" }
 
 # Prevent this from interfering with workspaces
 [workspace]
