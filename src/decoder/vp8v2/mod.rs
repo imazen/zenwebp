@@ -66,13 +66,17 @@ impl DecoderContext {
     /// container, after the VP8 chunk header has been stripped).
     pub fn decode_to_frame(&mut self, data: &[u8]) -> Result<Frame, whereat::At<DecodeError>> {
         self.read_frame_header(data)?;
-        self.decode_to_frame_internal()
+        self.decode_to_frame_internal(None, None)
             .map_err(|e| at!(DecodeError::from(e)))
     }
 
     /// Internal: decode MB rows to full-frame Y/U/V and build a Frame.
-    fn decode_to_frame_internal(&mut self) -> Result<Frame, InternalDecodeError> {
-        self.decode_mb_rows()?;
+    fn decode_to_frame_internal(
+        &mut self,
+        stop: Option<&dyn enough::Stop>,
+        report: Option<&dyn how_far::Report>,
+    ) -> Result<Frame, InternalDecodeError> {
+        self.decode_mb_rows(stop, report)?;
 
         let tables = &self.tables;
 
@@ -109,12 +113,30 @@ impl DecoderContext {
     /// buffers are allocated (~4 MB saved for 4K images).
     ///
     /// Returns `(width, height)` on success.
+    #[cfg(test)]
     pub fn decode_to_rgb(
         &mut self,
         data: &[u8],
         output: &mut Vec<u8>,
         bpp: usize,
     ) -> Result<(u16, u16), whereat::At<DecodeError>> {
+        self.decode_to_rgb_with_stop(data, output, bpp, None, None)
+    }
+
+    /// [`Self::decode_to_rgb`] with cancellation checked once per macroblock
+    /// row. A `pulse` is told the image height once the frame header is read
+    /// and advanced by the pixel rows each macroblock row completes.
+    pub(crate) fn decode_to_rgb_with_stop(
+        &mut self,
+        data: &[u8],
+        output: &mut Vec<u8>,
+        bpp: usize,
+        stop: Option<&dyn enough::Stop>,
+        pulse: Option<&dyn how_far::Pulse>,
+    ) -> Result<(u16, u16), whereat::At<DecodeError>> {
+        if let Some(stop) = stop {
+            stop.check().map_err(|e| at!(DecodeError::from(e)))?;
+        }
         if bpp != 3 && bpp != 4 {
             return Err(at!(DecodeError::InvalidParameter(alloc::format!(
                 "unsupported bpp: {bpp}"
@@ -125,6 +147,10 @@ impl DecoderContext {
 
         let w = self.tables.width;
         let h = self.tables.height;
+        if let Some(pulse) = pulse {
+            crate::pulse::declare_total(pulse, u64::from(h));
+        }
+        let report = pulse.map(|p| p as &dyn how_far::Report);
         let pixel_count = usize::from(w)
             .checked_mul(usize::from(h))
             .ok_or_else(|| at!(DecodeError::ImageTooLarge))?;
@@ -142,14 +168,14 @@ impl DecoderContext {
             // Streaming path: convert cache rows directly to RGB.
             // Requires extra_y_rows >= 2 so the cache has enough UV rows
             // for the fancy upsampler at MB row boundaries.
-            self.decode_mb_rows_to_rgb(output, bpp)
+            self.decode_mb_rows_to_rgb(output, bpp, stop, report)
                 .map_err(|e| at!(DecodeError::from(e)))?;
         } else {
             // Full-frame YUV buffers: the no-filter case (extra_y_rows=0,
             // rare: very high quality / filter disabled) and point-sampled
             // (no-fancy) output, which needs no cross-row chroma context.
             let frame = self
-                .decode_to_frame_internal()
+                .decode_to_frame_internal(stop, report)
                 .map_err(|e| at!(DecodeError::from(e)))?;
             let fw = usize::from(frame.width);
             let fh = usize::from(frame.height);
@@ -179,7 +205,11 @@ impl DecoderContext {
 
     /// Main decode loop for full-frame Y/U/V output. For each row: parse +
     /// predict/IDCT each MB individually, filter the row, copy to ybuf/ubuf/vbuf.
-    fn decode_mb_rows(&mut self) -> Result<(), InternalDecodeError> {
+    fn decode_mb_rows(
+        &mut self,
+        stop: Option<&dyn enough::Stop>,
+        report: Option<&dyn how_far::Report>,
+    ) -> Result<(), InternalDecodeError> {
         let mbwidth = usize::from(self.tables.mbwidth);
         let mbheight = usize::from(self.tables.mbheight);
 
@@ -214,6 +244,9 @@ impl DecoderContext {
             .map_err(|_| InternalDecodeError::MemoryLimitExceeded)?;
 
         for mby in 0..mbheight {
+            if let Some(stop) = stop {
+                stop.check()?;
+            }
             self.process_mb_row(mby)?;
 
             // Output cache to Y/U/V frame buffers
@@ -224,9 +257,19 @@ impl DecoderContext {
             self.left_border_y.fill(129u8);
             self.left_border_u.fill(129u8);
             self.left_border_v.fill(129u8);
+            self.report_mb_row(report, mby);
         }
 
         Ok(())
+    }
+
+    /// Advance `report` by the visible pixel rows macroblock row `mby` covers.
+    fn report_mb_row(&self, report: Option<&dyn how_far::Report>, mby: usize) {
+        if let Some(report) = report {
+            let height = usize::from(self.tables.height);
+            let rows = height.saturating_sub(mby * 16).min(16);
+            report.advance(rows as u64);
+        }
     }
 
     /// Streaming decode loop: converts cache rows directly to RGB/RGBA output.
@@ -235,6 +278,8 @@ impl DecoderContext {
         &mut self,
         output: &mut [u8],
         bpp: usize,
+        stop: Option<&dyn enough::Stop>,
+        report: Option<&dyn how_far::Report>,
     ) -> Result<(), InternalDecodeError> {
         let mbheight = usize::from(self.tables.mbheight);
         let width = usize::from(self.tables.width);
@@ -247,6 +292,9 @@ impl DecoderContext {
         self.prev_last_v_row.resize(chroma_width, 128);
 
         for mby in 0..mbheight {
+            if let Some(stop) = stop {
+                stop.check()?;
+            }
             self.process_mb_row(mby)?;
 
             // Convert cache rows directly to RGB output
@@ -286,6 +334,7 @@ impl DecoderContext {
             self.left_border_y.fill(129u8);
             self.left_border_u.fill(129u8);
             self.left_border_v.fill(129u8);
+            self.report_mb_row(report, mby);
         }
 
         Ok(())

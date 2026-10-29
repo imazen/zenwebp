@@ -477,6 +477,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "spin"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0134f9043ed38b087ac4f7d4af44c79e2c9e5094421fe3164f435ce585953b10"
+
+[[package]]
 name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -580,7 +586,7 @@ dependencies = [
  "garb",
  "linear-srgb",
  "magetypes",
- "zenpixels 0.2.16",
+ "zenpixels",
  "zenpixels-convert",
 ]
 
@@ -597,26 +603,15 @@ dependencies = [
 
 [[package]]
 name = "zencodec"
-version = "0.1.27"
-source = "git+https://github.com/imazen/zencodec?rev=d327434b0826a3e39633665c76f5081c0ceb34cc#d327434b0826a3e39633665c76f5081c0ceb34cc"
+version = "0.2.0"
+source = "git+https://github.com/imazen/zencodec?rev=e59b3803fc5b212bf4c92648ead4299c4ff0640a#e59b3803fc5b212bf4c92648ead4299c4ff0640a"
 dependencies = [
  "almost-enough",
  "enough",
  "how-far",
+ "spin",
  "whereat",
- "zenpixels 0.2.16",
-]
-
-[[package]]
-name = "zenpixels"
-version = "0.2.16"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5851fd39b312749a3c367a0cd3522bd95d43276cfa613e9c18df748447cef3a8"
-dependencies = [
- "bytemuck",
- "imgref",
- "rgb",
- "whereat",
+ "zenpixels",
 ]
 
 [[package]]
@@ -625,14 +620,15 @@ version = "0.2.17"
 source = "git+https://github.com/imazen/zenpixels?rev=8d8dee412702b40f1d01d398a018074a2b6de5e9#8d8dee412702b40f1d01d398a018074a2b6de5e9"
 dependencies = [
  "bytemuck",
+ "imgref",
+ "rgb",
  "whereat",
 ]
 
 [[package]]
 name = "zenpixels-convert"
-version = "0.2.16"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf516a64a98f08fa2aa19e86f1389e49894f750441044d65369687cf88a1b8dd"
+version = "0.2.17"
+source = "git+https://github.com/imazen/zenpixels?rev=8d8dee412702b40f1d01d398a018074a2b6de5e9#8d8dee412702b40f1d01d398a018074a2b6de5e9"
 dependencies = [
  "archmage",
  "bytemuck",
@@ -643,7 +639,7 @@ dependencies = [
  "once_cell",
  "paste",
  "whereat",
- "zenpixels 0.2.16",
+ "zenpixels",
 ]
 
 [[package]]
@@ -671,7 +667,7 @@ dependencies = [
  "safe_unaligned_simd",
  "whereat",
  "zenblend",
- "zenpixels 0.2.16",
+ "zenpixels",
 ]
 
 [[package]]
@@ -701,6 +697,7 @@ dependencies = [
  "enough",
  "garb",
  "hashbrown",
+ "how-far",
  "libm",
  "linear-srgb",
  "magetypes",
@@ -708,7 +705,7 @@ dependencies = [
  "thiserror",
  "whereat",
  "zencodec",
- "zenpixels 0.2.16",
+ "zenpixels",
  "zenpixels-convert",
  "zenyuv",
 ]
@@ -722,7 +719,7 @@ dependencies = [
  "rayon",
  "thiserror",
  "zenanalyze",
- "zenpixels 0.2.17",
+ "zenpixels",
  "zensim",
  "zenwebp",
 ]

@@ -44,10 +44,12 @@ fn every_poll_retains_one_shot_timeout() {
         let run = |fail_at| {
             zenwebp::zencodec::WebpDecoderConfig::new()
                 .job()
-                .with_stop(zencodec::StopToken::new(AtPoll {
-                    polls: polls.clone(),
-                    fail_at,
-                }))
+                .with_pulse(zencodec::SharedPulse::new(
+                    zencodec::how_far::StopOnly::new(AtPoll {
+                        polls: polls.clone(),
+                        fail_at,
+                    }),
+                ))
                 .inventory(bytes)
         };
         run(usize::MAX).unwrap();

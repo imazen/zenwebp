@@ -1009,6 +1009,7 @@ pub struct EncodeRequest<'a> {
     xmp_metadata: Option<&'a [u8]>,
     stop: &'a dyn enough::Stop,
     progress: &'a dyn EncodeProgress,
+    pulse: Option<&'a dyn how_far::Pulse>,
 }
 
 impl<'a> EncodeRequest<'a> {
@@ -1045,6 +1046,7 @@ impl<'a> EncodeRequest<'a> {
             xmp_metadata: None,
             stop: &enough::Unstoppable,
             progress: &NO_PROGRESS,
+            pulse: None,
         }
     }
 
@@ -1081,6 +1083,7 @@ impl<'a> EncodeRequest<'a> {
             xmp_metadata: None,
             stop: &enough::Unstoppable,
             progress: &NO_PROGRESS,
+            pulse: None,
         }
     }
 
@@ -1121,6 +1124,7 @@ impl<'a> EncodeRequest<'a> {
             xmp_metadata: None,
             stop: &enough::Unstoppable,
             progress: &NO_PROGRESS,
+            pulse: None,
         }
     }
 
@@ -1135,6 +1139,19 @@ impl<'a> EncodeRequest<'a> {
     #[must_use]
     pub fn with_progress(mut self, progress: &'a dyn EncodeProgress) -> Self {
         self.progress = progress;
+        self
+    }
+
+    /// Report progress to, and take cancellation from, a [`how_far::Pulse`].
+    ///
+    /// The encode declares a total of 100 units (percent) on the pulse and
+    /// advances it as it goes: lossy encodes per macroblock row, lossless at
+    /// the end. The pulse's cancellation is checked together with any
+    /// [`with_stop`](Self::with_stop) token; a [`with_progress`](Self::with_progress)
+    /// callback still receives every percent.
+    #[must_use]
+    pub fn with_pulse(mut self, pulse: &'a dyn how_far::Pulse) -> Self {
+        self.pulse = Some(pulse);
         self
     }
 
@@ -1353,13 +1370,20 @@ impl<'a> EncodeRequest<'a> {
             // through. Take the safe path.
             return Ok(None);
         }
-        let triple = lossy.encode_pixels_with_metrics(
-            self.pixels,
-            self.color_type,
-            self.width,
-            self.height,
+        let triple = crate::pulse::encode_with_pulse(
+            self.pulse,
             self.stop,
             self.progress,
+            |stop, progress| {
+                lossy.encode_pixels_with_metrics(
+                    self.pixels,
+                    self.color_type,
+                    self.width,
+                    self.height,
+                    stop,
+                    progress,
+                )
+            },
         )?;
         Ok(Some(triple))
     }
@@ -1409,32 +1433,33 @@ impl<'a> EncodeRequest<'a> {
         }
 
         let mut output = Vec::new();
-        let stats;
-        let diag;
-        {
-            let mut encoder = WebPEncoder::new(&mut output);
-            encoder.set_params(self.config.to_params());
-            encoder.set_stop(self.stop);
-            encoder.set_progress(self.progress);
-            if let Some(icc) = self.icc_profile {
-                encoder.set_icc_profile(icc.to_vec());
-            }
-            if let Some(exif) = self.exif_metadata {
-                encoder.set_exif_metadata(exif.to_vec());
-            }
-            if let Some(xmp) = self.xmp_metadata {
-                encoder.set_xmp_metadata(xmp.to_vec());
-            }
-            let (s, d) = encoder.encode_with_diagnostics(
-                self.pixels,
-                self.width,
-                self.height,
-                stride,
-                self.color_type,
-            )?;
-            stats = s;
-            diag = d;
-        }
+        let (stats, diag) = crate::pulse::encode_with_pulse(
+            self.pulse,
+            self.stop,
+            self.progress,
+            |stop, progress| {
+                let mut encoder = WebPEncoder::new(&mut output);
+                encoder.set_params(self.config.to_params());
+                encoder.set_stop(stop);
+                encoder.set_progress(progress);
+                if let Some(icc) = self.icc_profile {
+                    encoder.set_icc_profile(icc.to_vec());
+                }
+                if let Some(exif) = self.exif_metadata {
+                    encoder.set_exif_metadata(exif.to_vec());
+                }
+                if let Some(xmp) = self.xmp_metadata {
+                    encoder.set_xmp_metadata(xmp.to_vec());
+                }
+                encoder.encode_with_diagnostics(
+                    self.pixels,
+                    self.width,
+                    self.height,
+                    stride,
+                    self.color_type,
+                )
+            },
+        )?;
         Ok((output, stats, diag))
     }
 
@@ -1466,29 +1491,33 @@ impl<'a> EncodeRequest<'a> {
         }
 
         let mut output = Vec::new();
-        let stats;
-        {
-            let mut encoder = WebPEncoder::new(&mut output);
-            encoder.set_params(self.config.to_params());
-            encoder.set_stop(self.stop);
-            encoder.set_progress(self.progress);
-            if let Some(icc) = self.icc_profile {
-                encoder.set_icc_profile(icc.to_vec());
-            }
-            if let Some(exif) = self.exif_metadata {
-                encoder.set_exif_metadata(exif.to_vec());
-            }
-            if let Some(xmp) = self.xmp_metadata {
-                encoder.set_xmp_metadata(xmp.to_vec());
-            }
-            stats = encoder.encode(
-                self.pixels,
-                self.width,
-                self.height,
-                stride,
-                self.color_type,
-            )?;
-        }
+        let stats = crate::pulse::encode_with_pulse(
+            self.pulse,
+            self.stop,
+            self.progress,
+            |stop, progress| {
+                let mut encoder = WebPEncoder::new(&mut output);
+                encoder.set_params(self.config.to_params());
+                encoder.set_stop(stop);
+                encoder.set_progress(progress);
+                if let Some(icc) = self.icc_profile {
+                    encoder.set_icc_profile(icc.to_vec());
+                }
+                if let Some(exif) = self.exif_metadata {
+                    encoder.set_exif_metadata(exif.to_vec());
+                }
+                if let Some(xmp) = self.xmp_metadata {
+                    encoder.set_xmp_metadata(xmp.to_vec());
+                }
+                encoder.encode(
+                    self.pixels,
+                    self.width,
+                    self.height,
+                    stride,
+                    self.color_type,
+                )
+            },
+        )?;
         Ok((output, stats))
     }
 }
@@ -2211,6 +2240,10 @@ impl<'a> WebPEncoder<'a> {
                 self.params,
                 self.stop,
             )?;
+            // VP8L has no intermediate progress points; report completion.
+            self.progress
+                .on_progress(100)
+                .map_err(|e| at!(EncodeError::from(e)))?;
             b"VP8L"
         };
 

@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenwebp.txt 985 lines (supported surface) | zenwebp.features.txt 84 added (features: ablation,analyzer,avx512,cms,fast-yuv,imgref,inventory,mode_debug,pixel-types,std,target-zensim,testable_dispatch) | zenwebp.internal.txt 958 lines (1150 hidden + 270 excluded-feature)
+# files: zenwebp.txt 1004 lines (supported surface) | zenwebp.features.txt 84 added (features: ablation,analyzer,avx512,cms,fast-yuv,imgref,inventory,mode_debug,pixel-types,std,target-zensim,testable_dispatch) | zenwebp.internal.txt 960 lines (1152 hidden + 270 excluded-feature)
 
 ## summary
 #
@@ -14,35 +14,38 @@
 #   pub types (struct/enum/trait/alias)        83
 #   pub consts/statics                         19
 #   free functions                             78
-#   inherent methods                          276
-#   struct fields                             278
-#   enum variants                             196
-#   re-exports                                 15
+#   inherent methods                          288
+#   struct fields                             280
+#   enum variants                             197
+#   re-exports                                 18
 #   trait roster entries (type × trait)       179
-#   auto-trait-complete types                  42
-#   auto-trait exceptions                      13
+#   auto-trait-complete types                  41
+#   auto-trait exceptions                      14
 #
 # per-module pub lines:
-#   (root)                          323
+#   (root)                          334
 #   decoder                          95
 #   detect                           25
 #   encoder                         290
 #   heuristics                       14
 #   metadata                         10
-#   mux                             137
+#   mux                             144
 #   oneshot                          16
 #   pixel                            11
 #   zencodec                         41
 
-## items (915 lines)
+## items (933 lines)
 
 pub mod zenwebp
 pub use EncoderConfig
 pub use LosslessConfig
 pub use LossyConfig
+pub use NoPulse
 pub use Orientation
+pub use Pulse
 pub use SharpYuvConfig
 pub use Stop
+pub use StopOnly
 pub use StopReason
 pub use Unstoppable
 pub use ZensimEncodeMetrics
@@ -108,6 +111,7 @@ pub fn DecodeRequest<'a>::decode_rgba_into(self, &mut [u8]) -> DecodeResult<(u32
 pub fn DecodeRequest<'a>::decode_yuv420(self) -> DecodeResult<decoder::YuvPlanes>
 pub fn DecodeRequest<'a>::info(self) -> DecodeResult<ImageInfo>
 pub fn DecodeRequest<'a>::new(&'a DecodeConfig, &'a [u8]) -> Self
+pub fn DecodeRequest<'a>::pulse(self, &'a dyn how_far::pulse::Pulse) -> Self
 pub fn DecodeRequest<'a>::stop(self, &'a dyn enough::Stop) -> Self
 pub fn DecodeRequest<'a>::stride(self, u32) -> Self
 pub decoder::ImageInfo::exif: core::option::Option<alloc::vec::Vec<u8>>
@@ -167,12 +171,14 @@ pub fn WebPDecoder<'a>::new(&'a [u8]) -> DecodeResult<Self>
 pub fn WebPDecoder<'a>::num_frames(&self) -> u32
 pub fn WebPDecoder<'a>::output_buffer_size(&self) -> core::option::Option<usize>
 pub fn WebPDecoder<'a>::read_frame(&mut self, &mut [u8]) -> DecodeResult<u32>
+pub fn WebPDecoder<'a>::read_frame_with_pulse(&mut self, &mut [u8], &dyn how_far::pulse::Pulse) -> DecodeResult<u32>
 pub fn WebPDecoder<'a>::read_image(&mut self, &mut [u8]) -> DecodeResult<()>
 pub fn WebPDecoder<'a>::reset_animation(&mut self) -> DecodeResult<()>
 pub fn WebPDecoder<'a>::set_background_color(&mut self, [u8; 4]) -> DecodeResult<()>
 pub fn WebPDecoder<'a>::set_limits(&mut self, Limits)
 pub fn WebPDecoder<'a>::set_lossy_upsampling(&mut self, decoder::UpsamplingMethod)
 pub fn WebPDecoder<'a>::set_memory_limit(&mut self, usize)
+pub fn WebPDecoder<'a>::set_pulse(&mut self, core::option::Option<&'a dyn how_far::pulse::Pulse>)
 pub fn WebPDecoder<'a>::set_stop(&mut self, core::option::Option<&'a dyn enough::Stop>)
 pub fn WebPDecoder<'a>::xmp_metadata(&mut self) -> DecodeResult<core::option::Option<alloc::vec::Vec<u8>>>
 pub struct decoder::YuvPlanes
@@ -479,6 +485,7 @@ pub fn EncodeRequest<'a>::with_exif(self, &'a [u8]) -> Self
 pub fn EncodeRequest<'a>::with_icc_profile(self, &'a [u8]) -> Self
 pub fn EncodeRequest<'a>::with_metadata(self, ImageMetadata<'a>) -> Self
 pub fn EncodeRequest<'a>::with_progress(self, &'a dyn encoder::EncodeProgress) -> Self
+pub fn EncodeRequest<'a>::with_pulse(self, &'a dyn how_far::pulse::Pulse) -> Self
 pub fn EncodeRequest<'a>::with_stop(self, &'a dyn enough::Stop) -> Self
 pub fn EncodeRequest<'a>::with_stride(self, usize) -> Self
 pub fn EncodeRequest<'a>::with_xmp(self, &'a [u8]) -> Self
@@ -565,6 +572,9 @@ pub mux::MuxError::InvalidDimensions::height: u32
 pub mux::MuxError::InvalidDimensions::width: u32
 pub mux::MuxError::InvalidFormat(alloc::string::String)
 pub mux::MuxError::NoFrames
+pub mux::MuxError::NonmonotonicTimestamp
+pub mux::MuxError::NonmonotonicTimestamp::previous_ms: u32
+pub mux::MuxError::NonmonotonicTimestamp::timestamp_ms: u32
 pub mux::MuxError::OddFrameOffset
 pub mux::MuxError::OddFrameOffset::x: u32
 pub mux::MuxError::OddFrameOffset::y: u32
@@ -582,6 +592,7 @@ pub struct mux::AnimationDecoder<'a>
 pub fn mux::AnimationDecoder<'a>::current_frame_data(&self) -> &[u8]
 pub fn mux::AnimationDecoder<'a>::decode_all(&mut self) -> core::result::Result<alloc::vec::Vec<mux::AnimFrame>, whereat::at::At<DecodeError>>
 pub fn mux::AnimationDecoder<'a>::decode_next(&mut self) -> core::result::Result<core::option::Option<mux::FrameInfo>, whereat::at::At<DecodeError>>
+pub fn mux::AnimationDecoder<'a>::decode_next_with_pulse(&mut self, &dyn how_far::pulse::Pulse) -> core::result::Result<core::option::Option<mux::FrameInfo>, whereat::at::At<DecodeError>>
 pub fn mux::AnimationDecoder<'a>::exif_metadata(&mut self) -> core::result::Result<core::option::Option<alloc::vec::Vec<u8>>, whereat::at::At<DecodeError>>
 pub fn mux::AnimationDecoder<'a>::frames_read(&self) -> u32
 pub fn mux::AnimationDecoder<'a>::has_more_frames(&self) -> bool
@@ -595,11 +606,14 @@ pub fn mux::AnimationDecoder<'a>::reset(&mut self) -> core::result::Result<(), w
 pub fn mux::AnimationDecoder<'a>::set_background_color(&mut self, [u8; 4]) -> core::result::Result<(), whereat::at::At<DecodeError>>
 pub fn mux::AnimationDecoder<'a>::set_lossy_upsampling(&mut self, decoder::UpsamplingMethod)
 pub fn mux::AnimationDecoder<'a>::set_memory_limit(&mut self, usize)
+pub fn mux::AnimationDecoder<'a>::set_pulse(&mut self, &'a dyn how_far::pulse::Pulse)
 pub fn mux::AnimationDecoder<'a>::set_stop(&mut self, &'a dyn enough::Stop)
 pub fn mux::AnimationDecoder<'a>::xmp_metadata(&mut self) -> core::result::Result<core::option::Option<alloc::vec::Vec<u8>>, whereat::at::At<DecodeError>>
 pub struct mux::AnimationEncoder
 pub fn mux::AnimationEncoder::add_frame(&mut self, &[u8], PixelLayout, u32, &EncoderConfig) -> mux::MuxResult<()>
 pub fn mux::AnimationEncoder::add_frame_advanced(&mut self, &[u8], PixelLayout, u32, u32, u32, u32, u32, &EncoderConfig, mux::DisposeMethod, mux::BlendMethod) -> mux::MuxResult<()>
+pub fn mux::AnimationEncoder::add_frame_advanced_with_pulse(&mut self, &[u8], PixelLayout, u32, u32, u32, u32, u32, &EncoderConfig, mux::DisposeMethod, mux::BlendMethod, &dyn how_far::pulse::Pulse) -> mux::MuxResult<()>
+pub fn mux::AnimationEncoder::add_frame_with_pulse(&mut self, &[u8], PixelLayout, u32, &EncoderConfig, &dyn how_far::pulse::Pulse) -> mux::MuxResult<()>
 pub fn mux::AnimationEncoder::exif(&mut self, alloc::vec::Vec<u8>)
 pub fn mux::AnimationEncoder::finalize(self, u32) -> mux::MuxResult<alloc::vec::Vec<u8>>
 pub fn mux::AnimationEncoder::icc_profile(&mut self, alloc::vec::Vec<u8>)
@@ -854,6 +868,7 @@ pub fn DecodeRequest<'a>::decode_rgba_into(self, &mut [u8]) -> DecodeResult<(u32
 pub fn DecodeRequest<'a>::decode_yuv420(self) -> DecodeResult<decoder::YuvPlanes>
 pub fn DecodeRequest<'a>::info(self) -> DecodeResult<ImageInfo>
 pub fn DecodeRequest<'a>::new(&'a DecodeConfig, &'a [u8]) -> Self
+pub fn DecodeRequest<'a>::pulse(self, &'a dyn how_far::pulse::Pulse) -> Self
 pub fn DecodeRequest<'a>::stop(self, &'a dyn enough::Stop) -> Self
 pub fn DecodeRequest<'a>::stride(self, u32) -> Self
 pub struct EncodeRequest<'a> [also: encoder]
@@ -869,6 +884,7 @@ pub fn EncodeRequest<'a>::with_exif(self, &'a [u8]) -> Self
 pub fn EncodeRequest<'a>::with_icc_profile(self, &'a [u8]) -> Self
 pub fn EncodeRequest<'a>::with_metadata(self, ImageMetadata<'a>) -> Self
 pub fn EncodeRequest<'a>::with_progress(self, &'a dyn encoder::EncodeProgress) -> Self
+pub fn EncodeRequest<'a>::with_pulse(self, &'a dyn how_far::pulse::Pulse) -> Self
 pub fn EncodeRequest<'a>::with_stop(self, &'a dyn enough::Stop) -> Self
 pub fn EncodeRequest<'a>::with_stride(self, usize) -> Self
 pub fn EncodeRequest<'a>::with_xmp(self, &'a [u8]) -> Self
@@ -941,12 +957,14 @@ pub fn WebPDecoder<'a>::new(&'a [u8]) -> DecodeResult<Self>
 pub fn WebPDecoder<'a>::num_frames(&self) -> u32
 pub fn WebPDecoder<'a>::output_buffer_size(&self) -> core::option::Option<usize>
 pub fn WebPDecoder<'a>::read_frame(&mut self, &mut [u8]) -> DecodeResult<u32>
+pub fn WebPDecoder<'a>::read_frame_with_pulse(&mut self, &mut [u8], &dyn how_far::pulse::Pulse) -> DecodeResult<u32>
 pub fn WebPDecoder<'a>::read_image(&mut self, &mut [u8]) -> DecodeResult<()>
 pub fn WebPDecoder<'a>::reset_animation(&mut self) -> DecodeResult<()>
 pub fn WebPDecoder<'a>::set_background_color(&mut self, [u8; 4]) -> DecodeResult<()>
 pub fn WebPDecoder<'a>::set_limits(&mut self, Limits)
 pub fn WebPDecoder<'a>::set_lossy_upsampling(&mut self, decoder::UpsamplingMethod)
 pub fn WebPDecoder<'a>::set_memory_limit(&mut self, usize)
+pub fn WebPDecoder<'a>::set_pulse(&mut self, core::option::Option<&'a dyn how_far::pulse::Pulse>)
 pub fn WebPDecoder<'a>::set_stop(&mut self, core::option::Option<&'a dyn enough::Stop>)
 pub fn WebPDecoder<'a>::xmp_metadata(&mut self) -> DecodeResult<core::option::Option<alloc::vec::Vec<u8>>>
 pub type DecodeResult<T> = core::result::Result<T, whereat::at::At<DecodeError>> [also: decoder]
@@ -1013,7 +1031,7 @@ zencodec::WebpStreamingDecoder: zencodec::traits::decoder::StreamingDecode
 
 ## auto traits
 
-42 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+41 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
 DecodeError: !RefUnwindSafe !UnwindSafe
 DecodeRequest<'a>: !RefUnwindSafe !UnwindSafe
 EncodeError: !RefUnwindSafe !UnwindSafe
@@ -1022,6 +1040,7 @@ WebPDecoder<'a>: !RefUnwindSafe !UnwindSafe
 mux::AnimationDecoder<'a>: !RefUnwindSafe !UnwindSafe
 mux::MuxError: !RefUnwindSafe !UnwindSafe
 zencodec::WebpAnimationFrameDecoder: !RefUnwindSafe !UnwindSafe
+zencodec::WebpAnimationFrameEncoder: !RefUnwindSafe !UnwindSafe
 zencodec::WebpDecodeJob: !RefUnwindSafe !UnwindSafe
 zencodec::WebpDecoder<'a>: !RefUnwindSafe !UnwindSafe
 zencodec::WebpEncodeJob: !RefUnwindSafe !UnwindSafe

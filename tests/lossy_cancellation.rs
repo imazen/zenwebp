@@ -120,7 +120,9 @@ fn zencodec_lossy_decode_honors_pre_stopped_token() {
     );
 
     let err = job()
-        .with_stop(zencodec::StopToken::new(AlwaysStopped))
+        .with_pulse(zencodec::SharedPulse::new(
+            zencodec::how_far::StopOnly::new(AlwaysStopped),
+        ))
         .decoder(std::borrow::Cow::Borrowed(&data[..]), &[])
         .and_then(|d| d.decode())
         .expect_err("stopped token must cancel the lossy decode");

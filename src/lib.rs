@@ -160,6 +160,7 @@ mod inventory;
 pub mod mux;
 
 // Slice reader utility (used by decoder and mux)
+mod pulse;
 mod slice_reader;
 #[cfg(test)]
 pub(crate) mod test_token_lock;
@@ -218,6 +219,10 @@ pub use zenyuv::SharpYuvConfig;
 /// [`Stop`] for a custom cancellation source, or pass [`Unstoppable`] when no
 /// cancellation is needed.
 pub use enough::{Stop, StopReason, Unstoppable};
+// how-far: `Pulse` (cancellation + progress) for the `with_pulse` / `pulse` /
+// `set_pulse` / `*_with_pulse` entry points; `StopOnly` adapts a bare `Stop`,
+// `NoPulse` reports nothing.
+pub use how_far::{NoPulse, Pulse, StopOnly};
 
 // #[cfg(feature = "zennode")]
 // pub mod zennode_defs;
