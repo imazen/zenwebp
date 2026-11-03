@@ -125,4 +125,4 @@ zenwebp = { workspace = true, features = ["std"] }
 # Merged pixel-context bridge; keep root, fuzz and recompress on one revision.
 zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "5bf81d640752793454802d7a94346c3c1e97c81e" }
 zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "5bf81d640752793454802d7a94346c3c1e97c81e" }
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "8f5cbd22ef8b1d196e96fe826dda0933040fe02a" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "993b9a04370c5314056f97ea8c91b262358d1636" }
