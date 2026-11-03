@@ -2251,6 +2251,52 @@ pub struct YuvPlanes {
     pub uv_height: u32,
 }
 
+impl YuvPlanes {
+    /// Borrow the Y, U and V buffers as zenpixels planes plus their layout,
+    /// without copying.
+    ///
+    /// The layout is 8-bit Y/Cb/Cr with 4:2:0 subsampling. Chroma siting is
+    /// reported as [`zenpixels::sample::ChromaSiting::Unknown`]: this crate
+    /// does not record where VP8 chroma samples sit.
+    ///
+    /// Each plane is tightly packed (stride equals width). Returns `None` when
+    /// the public fields are inconsistent: a buffer shorter than its stated
+    /// size, or chroma sizes other than the 4:2:0 rounding of the luma size.
+    pub fn as_planes(
+        &self,
+    ) -> Option<(
+        zenpixels::plane::PlanarLayout,
+        [zenpixels::plane::AnyPlane<'_>; 3],
+    )> {
+        use zenpixels::ChannelType;
+        use zenpixels::plane::{
+            AnyPlane, PlanarLayout, PlaneEncoding, PlaneRef, PlaneRole, PlaneSpec,
+        };
+        use zenpixels::sample::{ChromaSiting, ChromaSubsampling, SampleEncoding};
+
+        let code = PlaneEncoding::Code(SampleEncoding::new(ChannelType::U8, 8, 0).ok()?);
+        let layout = PlanarLayout::new(
+            alloc::vec![
+                PlaneSpec::new(PlaneRole::Luma, code),
+                PlaneSpec::new(PlaneRole::Cb, code),
+                PlaneSpec::new(PlaneRole::Cr, code),
+            ],
+            ChromaSubsampling::Yuv420,
+            ChromaSiting::Unknown,
+        )
+        .ok()?;
+        let (yw, yh) = (self.y_width as usize, self.y_height as usize);
+        let (cw, ch) = (self.uv_width as usize, self.uv_height as usize);
+        let planes = [
+            AnyPlane::U8(PlaneRef::new(&self.y[..], yw, yh, yw).ok()?),
+            AnyPlane::U8(PlaneRef::new(&self.u[..], cw, ch, cw).ok()?),
+            AnyPlane::U8(PlaneRef::new(&self.v[..], cw, ch, cw).ok()?),
+        ];
+        layout.check(&planes, self.y_width, self.y_height).ok()?;
+        Some((layout, planes))
+    }
+}
+
 /// Decode WebP data to BGRA pixels (blue, green, red, alpha order).
 ///
 /// Returns the decoded pixels and dimensions.
@@ -2866,5 +2912,42 @@ mod yuv420_config_tests {
         let base = planes(AllocPreference::CodecDefault);
         assert_eq!(base, planes(AllocPreference::Fallible));
         assert_eq!(base, planes(AllocPreference::Infallible));
+    }
+
+    #[test]
+    fn yuv_planes_borrow_without_copy() {
+        use zenpixels::plane::AnyPlane;
+        use zenpixels::sample::{ChromaSiting, ChromaSubsampling};
+        for (w, h) in [(32u32, 32u32), (17, 9), (1, 1), (33, 2)] {
+            let rgb: Vec<u8> = (0..w * h * 3).map(|i| (i * 7 % 251) as u8).collect();
+            let webp = EncodeRequest::new(
+                &EncoderConfig::new_lossy().with_quality(80.0),
+                &rgb,
+                PixelLayout::Rgb8,
+                w,
+                h,
+            )
+            .encode()
+            .unwrap();
+            let yuv = decode_yuv420(&webp).unwrap();
+            assert_eq!((yuv.y_width, yuv.y_height), (w, h));
+            assert_eq!((yuv.uv_width, yuv.uv_height), (w.div_ceil(2), h.div_ceil(2)));
+            let (layout, planes) = yuv.as_planes().expect("consistent YuvPlanes");
+            assert_eq!(layout.subsampling(), ChromaSubsampling::Yuv420);
+            assert_eq!(layout.siting(), ChromaSiting::Unknown);
+            for (i, (plane, buf)) in planes.iter().zip([&yuv.y, &yuv.u, &yuv.v]).enumerate() {
+                let AnyPlane::U8(p) = plane else {
+                    panic!("plane {i} is not U8")
+                };
+                let (pw, ph) = layout.plane_size(i, w, h).unwrap();
+                assert_eq!((p.width(), p.height()), (pw as usize, ph as usize));
+                assert_eq!(p.width() * p.height(), buf.len(), "{w}x{h} plane {i}");
+                for y in 0..p.height() {
+                    let row = p.row(y).unwrap();
+                    assert_eq!(row.as_ptr(), buf[y * p.width()..].as_ptr(), "{w}x{h} plane {i} row {y}");
+                    assert_eq!(row.len(), p.width());
+                }
+            }
+        }
     }
 }

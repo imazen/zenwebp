@@ -777,6 +777,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "how-far-really"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3b9972a73c90b26b7682b067a5b4a34f679ea79f5845a20c1f11df03432a6aa1"
+dependencies = [
+ "how-far",
+ "how-far-along",
+]
+
+[[package]]
 name = "image"
 version = "0.25.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2071,7 +2081,7 @@ dependencies = [
  "linear-srgb",
  "magetypes",
  "zenanalyze-api",
- "zenpixels",
+ "zenpixels 0.3.1",
  "zenpixels-convert",
 ]
 
@@ -2108,37 +2118,40 @@ dependencies = [
 [[package]]
 name = "zencodec"
 version = "0.2.0"
-source = "git+https://github.com/imazen/zencodec?rev=feb09f9fd25e90e49a30d7161db8f3b558dfb2a6#feb09f9fd25e90e49a30d7161db8f3b558dfb2a6"
+source = "git+https://github.com/imazen/zencodec?rev=8f5cbd22ef8b1d196e96fe826dda0933040fe02a#8f5cbd22ef8b1d196e96fe826dda0933040fe02a"
 dependencies = [
  "almost-enough",
  "enough",
  "how-far",
+ "libm",
  "spin",
  "whereat",
- "zenpixels",
+ "zenpixels 0.3.1",
 ]
 
 [[package]]
 name = "zencodec-io"
 version = "0.1.0"
-source = "git+https://github.com/imazen/zencodec?rev=feb09f9fd25e90e49a30d7161db8f3b558dfb2a6#feb09f9fd25e90e49a30d7161db8f3b558dfb2a6"
+source = "git+https://github.com/imazen/zencodec?rev=8f5cbd22ef8b1d196e96fe826dda0933040fe02a#8f5cbd22ef8b1d196e96fe826dda0933040fe02a"
 dependencies = [
  "enough",
  "how-far",
  "zencodec",
- "zenpixels",
+ "zenpixels 0.3.1",
 ]
 
 [[package]]
 name = "zencodec-testkit"
 version = "0.2.0"
-source = "git+https://github.com/imazen/zencodec?rev=feb09f9fd25e90e49a30d7161db8f3b558dfb2a6#feb09f9fd25e90e49a30d7161db8f3b558dfb2a6"
+source = "git+https://github.com/imazen/zencodec?rev=8f5cbd22ef8b1d196e96fe826dda0933040fe02a#8f5cbd22ef8b1d196e96fe826dda0933040fe02a"
 dependencies = [
  "enough",
+ "how-far-along",
+ "how-far-really",
  "whereat",
  "zencodec",
  "zencodec-io",
- "zenpixels",
+ "zenpixels 0.3.1",
 ]
 
 [[package]]
@@ -2152,8 +2165,18 @@ dependencies = [
 
 [[package]]
 name = "zenpixels"
-version = "0.2.17"
-source = "git+https://github.com/imazen/zenpixels?rev=283655c5424e0ad7ebc6d2acd94670fac1e29158#283655c5424e0ad7ebc6d2acd94670fac1e29158"
+version = "0.2.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5851fd39b312749a3c367a0cd3522bd95d43276cfa613e9c18df748447cef3a8"
+dependencies = [
+ "bytemuck",
+ "whereat",
+]
+
+[[package]]
+name = "zenpixels"
+version = "0.3.1"
+source = "git+https://github.com/imazen/zenpixels?rev=5bf81d640752793454802d7a94346c3c1e97c81e#5bf81d640752793454802d7a94346c3c1e97c81e"
 dependencies = [
  "bytemuck",
  "imgref",
@@ -2163,8 +2186,8 @@ dependencies = [
 
 [[package]]
 name = "zenpixels-convert"
-version = "0.2.17"
-source = "git+https://github.com/imazen/zenpixels?rev=283655c5424e0ad7ebc6d2acd94670fac1e29158#283655c5424e0ad7ebc6d2acd94670fac1e29158"
+version = "0.3.1"
+source = "git+https://github.com/imazen/zenpixels?rev=5bf81d640752793454802d7a94346c3c1e97c81e#5bf81d640752793454802d7a94346c3c1e97c81e"
 dependencies = [
  "archmage",
  "bytemuck",
@@ -2177,7 +2200,7 @@ dependencies = [
  "paste",
  "rgb",
  "whereat",
- "zenpixels",
+ "zenpixels 0.3.1",
 ]
 
 [[package]]
@@ -2201,7 +2224,7 @@ dependencies = [
  "whereat",
  "zencodec",
  "zenflate",
- "zenpixels",
+ "zenpixels 0.3.1",
  "zenpixels-convert",
  "zenquant",
 ]
@@ -2247,7 +2270,7 @@ dependencies = [
  "safe_unaligned_simd",
  "whereat",
  "zenblend",
- "zenpixels",
+ "zenpixels 0.2.16",
 ]
 
 [[package]]
@@ -2337,7 +2360,7 @@ dependencies = [
  "zencodec",
  "zencodec-io",
  "zencodec-testkit",
- "zenpixels",
+ "zenpixels 0.3.1",
  "zenpixels-convert",
  "zenpng",
  "zenpredict",
@@ -2420,9 +2443,9 @@ dependencies = [
 [[patch.unused]]
 name = "zencodec-coroutine"
 version = "0.1.0"
-source = "git+https://github.com/imazen/zencodec?rev=feb09f9fd25e90e49a30d7161db8f3b558dfb2a6#feb09f9fd25e90e49a30d7161db8f3b558dfb2a6"
+source = "git+https://github.com/imazen/zencodec?rev=8f5cbd22ef8b1d196e96fe826dda0933040fe02a#8f5cbd22ef8b1d196e96fe826dda0933040fe02a"
 
 [[patch.unused]]
 name = "zenmeta"
 version = "0.1.0"
-source = "git+https://github.com/imazen/zencodec?rev=feb09f9fd25e90e49a30d7161db8f3b558dfb2a6#feb09f9fd25e90e49a30d7161db8f3b558dfb2a6"
+source = "git+https://github.com/imazen/zencodec?rev=8f5cbd22ef8b1d196e96fe826dda0933040fe02a#8f5cbd22ef8b1d196e96fe826dda0933040fe02a"
