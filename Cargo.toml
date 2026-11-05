@@ -38,14 +38,14 @@ whereat = { version = "0.1.5", default-features = false }
 libm = "0.2.16"
 zencodec = ">=0.2.0, <0.3.0"
 # zennode = { path = "../zennode/zennode", optional = true, default-features = false, features = ["derive"] }
-zenpixels = { version = ">=0.2.11, <0.4.0", default-features = false }
+zenpixels = { version = ">=0.3.1, <0.4.0", default-features = false }
 # Used by the zencodec encode path to synthesize an ICC profile from a
 # CICP-only source (WebP has no CICP carrier, so an embedded ICC is the only
 # way to retain non-sRGB primaries). `synthesize_icc_for_cicp` is a transfer-
 # aware lookup — no CMS, no_std-safe. Unconditional (the zencodec integration
 # is always-on); `default-features = false` keeps the wasm32 (no_std) build
 # clean.
-zenpixels-convert = { version = ">=0.2.13, <0.4.0", default-features = false }
+zenpixels-convert = { version = ">=0.3.1, <0.4.0", default-features = false }
 # self_cell backs the owned-data animation decoder in the zencodec adapter
 # (codec.rs). no_std-clean, so it rides the always-on integration.
 self_cell = { version = "1.2" }
@@ -96,7 +96,7 @@ zenanalyze = { version = "0.2.0", optional = true, features = ["api", "experimen
 [dev-dependencies]
 how-far-along = { version = "0.1.0", default-features = false, features = ["std"] }
 # The testkit's incremental drivers; the same checkout as the patched zencodec.
-zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "feb09f9fd25e90e49a30d7161db8f3b558dfb2a6" }
+zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "1816b4d082234c04c3805411b437b8396040f522" }
 # Companion crate shipping the conformance checks (incl.
 # `check_decode_truncation_series`); the root patch keeps it on the codec's zencodec.
 zencodec-testkit = ">=0.2.0, <0.3.0"
@@ -110,7 +110,7 @@ rand = "0.10.1"
 rayon = "1.10"
 rgb = "0.8"
 zenpng = ">=0.2.0, <0.4.0"
-zenpixels-convert = { version = ">=0.2.13, <0.4.0", features = ["rgb"] }
+zenpixels-convert = { version = ">=0.3.1, <0.4.0", features = ["rgb"] }
 jpeg-decoder = "0.3"
 # zenanalyze as a path-pinned dev-dep was removed: CI regression-test
 # runs (`cargo build` then `cargo test --test fuzz_regression`) don't
@@ -518,21 +518,21 @@ required-features = ["_dev"]
 [patch.crates-io]
 # PNG strip compression requires this tested source; dependency patches do not propagate.
 zenflate = { git = "https://github.com/imazen/zenflate", rev = "a0ea03637a2cc9a193e343018ae2cfb1a6c31edd" }
-zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "feb09f9fd25e90e49a30d7161db8f3b558dfb2a6" }
-zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "feb09f9fd25e90e49a30d7161db8f3b558dfb2a6" }
-zenmeta = { git = "https://github.com/imazen/zencodec", rev = "feb09f9fd25e90e49a30d7161db8f3b558dfb2a6" }
-zenpng = { git = "https://github.com/imazen/zenpng", rev = "7b6d1436db5d771fc43226c146847fc76305afde" }
+zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "1816b4d082234c04c3805411b437b8396040f522" }
+zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "1816b4d082234c04c3805411b437b8396040f522" }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "1816b4d082234c04c3805411b437b8396040f522" }
+zenpng = { git = "https://github.com/imazen/zenpng", rev = "02a7f0df5f72dd79b0afa58d66ced7cdd8395e31" }
 
 # Merged pixel-context bridge; keep root, fuzz and recompress on one revision.
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "283655c5424e0ad7ebc6d2acd94670fac1e29158" }
-zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "283655c5424e0ad7ebc6d2acd94670fac1e29158" }
-zenanalyze-api = { git = "https://github.com/imazen/zenanalyze" }
-zenanalyze = { git = "https://github.com/imazen/zenanalyze" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "fa836abf72afe9826e866dc25712b7c800323962" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "fa836abf72afe9826e866dc25712b7c800323962" }
+zenanalyze-api = { git = "https://github.com/imazen/zenanalyze", rev = "bb88b42131438fbe4eeb42827f2a5653fc085a6d" }
+zenanalyze = { git = "https://github.com/imazen/zenanalyze", rev = "bb88b42131438fbe4eeb42827f2a5653fc085a6d" }
 # The zencodec 0.2 family (the Pulse contract) from one core revision; root, fuzz and
 # recompress patch the same one. zencodec 0.2 is not on crates.io: swap these patches for
 # the released zencodec / zencodec-testkit before releasing.
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "feb09f9fd25e90e49a30d7161db8f3b558dfb2a6" }
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "feb09f9fd25e90e49a30d7161db8f3b558dfb2a6" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "1816b4d082234c04c3805411b437b8396040f522" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "1816b4d082234c04c3805411b437b8396040f522" }
 
 # Wide-corpus decoder parity sweep vs libwebp (rgba/rgb/nofancy/yuv/anim,
 # tolerance 0) over existing .webp files plus libwebp- and zenwebp-encoded
