@@ -14,6 +14,8 @@ earlier history lives in git log and LOG.md.)
 
 ### Changed
 
+- Accept the archmage and magetypes 0.9.31 stable release.
+
 - Converge root, fuzz and recompress on the shared core/pixel revisions; preserve legacy metadata-setter coverage and the recompress Profile A calibration. Checked metadata retention remains unsupported. See [qualification](benchmarks/sibling_cohort_2026-11-05.pointer.md) (`a6f84b56`).
 
 - Fresh zeroed allocation uses `bytemuck::allocation::try_zeroed_vec` for
