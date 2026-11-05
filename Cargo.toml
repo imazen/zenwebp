@@ -104,7 +104,7 @@ zencodec-testkit = ">=0.2.0, <0.3.0"
 # SIMD token (NEON on aarch64) so the scalar arm is real rather than a
 # second measurement of the SIMD path.
 archmage = { version = ">=0.9.15, <0.10.0", features = ["std", "macros", "testable_dispatch"] }
-paste = "1.0.14"
+paste = { package = "pastey", version = "0.2.3" }
 png = "0.18"
 rand = "0.10.1"
 rayon = "1.10"
