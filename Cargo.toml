@@ -473,6 +473,10 @@ name = "decode_zenbench"
 harness = false
 
 [[bench]]
+name = "zeroed_alloc"
+harness = false
+
+[[bench]]
 name = "tier_isolation"
 harness = false
 

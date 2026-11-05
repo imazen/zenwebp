@@ -6,10 +6,16 @@
 //!   the VP8 row cache (sized from the header macroblock dimensions), the
 //!   lossless ARGB plane, the animation canvas. A malicious header can demand
 //!   gigabytes, so we want a graceful `MemoryLimitExceeded` rather than an
-//!   abort. These sites default to the *fallible* `try_reserve` path.
+//!   abort. These sites default to fallible allocation.
 //! * **Small, bounded scratch** — per-row workspaces and fixed tables, bounded
-//!   by the image width (not unbounded attacker control). A single `vec!`
-//!   `calloc` is faster, so these sites default to the *infallible* path.
+//!   by the image width (not unbounded attacker control). These sites default
+//!   to infallible allocation.
+//!
+//! Fresh zeroed buffers use [`bytemuck::allocation::try_zeroed_vec`] in every
+//! mode. It requests zeroed memory directly from the allocator, avoiding a
+//! separate reserve-and-fill path. The preference is consulted only if this
+//! allocation fails: fallible sites return an error, infallible sites retain
+//! their allocation-error handler (or capacity-overflow panic).
 //!
 //! [`AllocPreference`] is a **3-mode, per-site override** of that default:
 //! [`Fallible`](AllocPreference::Fallible) / [`Infallible`](AllocPreference::Infallible)
@@ -42,7 +48,7 @@
 //! `ResourceLimits::prefer_fallible_allocations`. Under `Fallible` the
 //! top-level O(pixels) encoder buffers — the layout-expansion copies, the
 //! VP8L ARGB plane, the lossy ARGB→RGBA fix-up and the ALPH alpha planes —
-//! go through `try_reserve` and an allocation failure surfaces as
+//! use fallible allocation and an allocation failure surfaces as
 //! `EncodeError::LimitExceeded(LimitKind::Memory, ..)` instead of an abort.
 //! The deeper per-pixel working set (YUV planes, hash chains, backward
 //! references, histograms, token buffers) is still infallible; the pre-flight
@@ -61,12 +67,12 @@ pub(crate) enum AllocPreference {
     /// Keep each allocation site's own default fallibility.
     #[default]
     CodecDefault,
-    /// Force every site onto the fallible (`try_reserve`) path.
+    /// Return an error when an allocation fails.
     //
     // Constructed via the `zencodec::AllocPreference` adapter (`src/codec.rs`),
     // which is now an always-on integration.
     Fallible,
-    /// Force every site onto the infallible (`vec!`) path.
+    /// Use the allocation-error handler when an allocation fails.
     Infallible,
 }
 
@@ -92,25 +98,24 @@ pub(crate) fn resolve_fallible(pref: AllocPreference, site_default_fallible: boo
     }
 }
 
-/// Allocate `n` zeroed bytes, honoring the per-site fallibility.
+/// Allocate `n` zeroed bytes through the allocator's zeroed-allocation path.
 ///
-/// * fallible → `try_reserve_exact` then zero-fill, returning [`AllocFailed`]
-///   on allocation failure.
-/// * infallible → `vec![0u8; n]` (single `calloc`, aborts on OOM).
+/// Both policies use [`bytemuck::allocation::try_zeroed_vec`]. On failure,
+/// fallible sites return [`AllocFailed`]; infallible sites abort on OOM or
+/// panic on capacity overflow, as `vec![0u8; n]` does.
 #[inline]
 pub(crate) fn alloc_zeroed(
     pref: AllocPreference,
     site_default_fallible: bool,
     n: usize,
 ) -> Result<Vec<u8>, AllocFailed> {
-    if resolve_fallible(pref, site_default_fallible) {
-        let mut v = Vec::new();
-        v.try_reserve_exact(n).map_err(|_| AllocFailed)?;
-        v.resize(n, 0);
-        Ok(v)
-    } else {
-        Ok(vec![0u8; n])
-    }
+    bytemuck::allocation::try_zeroed_vec(n).map_err(|()| {
+        if !resolve_fallible(pref, site_default_fallible) {
+            let layout = core::alloc::Layout::array::<u8>(n).expect("capacity overflow");
+            alloc::alloc::handle_alloc_error(layout);
+        }
+        AllocFailed
+    })
 }
 
 /// Resize an existing `Vec<u8>` to `n` bytes (zero-filling any growth),
@@ -264,6 +269,41 @@ mod tests {
         assert_eq!(a, b);
         assert_eq!(a, c);
         assert!(a.iter().all(|&x| x == 0));
+    }
+
+    #[test]
+    fn alloc_zeroed_empty_and_page_boundaries() {
+        for pref in [
+            AllocPreference::CodecDefault,
+            AllocPreference::Fallible,
+            AllocPreference::Infallible,
+        ] {
+            for site_default in [false, true] {
+                for n in [0, 1, 4095, 4096, 4097, 65536] {
+                    let mut buf = alloc_zeroed(pref, site_default, n).unwrap();
+                    assert_eq!(buf.len(), n);
+                    assert_eq!(buf.capacity(), n);
+                    assert!(buf.iter().all(|&byte| byte == 0));
+                    // The allocation remains a normal, writable, growable Vec.
+                    buf.fill(0xAB);
+                    buf.push(0xCD);
+                    assert!(buf[..n].iter().all(|&byte| byte == 0xAB));
+                    assert_eq!(buf[n], 0xCD);
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "capacity overflow")]
+    fn alloc_zeroed_infallible_capacity_overflow_still_panics() {
+        let _ = alloc_zeroed(AllocPreference::Infallible, true, usize::MAX);
+    }
+
+    #[test]
+    #[should_panic(expected = "capacity overflow")]
+    fn alloc_zeroed_default_infallible_capacity_overflow_still_panics() {
+        let _ = alloc_zeroed(AllocPreference::CodecDefault, false, usize::MAX);
     }
 
     #[test]

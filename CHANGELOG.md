@@ -11,6 +11,11 @@ earlier history lives in git log and LOG.md.)
 
 ### Changed
 
+- Fresh zeroed allocation uses `bytemuck::allocation::try_zeroed_vec` for
+  both allocation preferences, with error policy applied only on failure.
+  Fallible allocation errors, infallible OOM handling and capacity-overflow
+  panics are preserved. Resize, arbitrary-fill and capacity-only helpers
+  retain their existing paths.
 - Admit archmage/magetypes 0.9.31-beta.1 alongside compatible stable versions; use explicit-token aliases where needed. Formatting, strict library lint and library tests pass (`ab50d43c`).
 
 ### QUEUED BREAKING CHANGES

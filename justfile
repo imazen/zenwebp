@@ -107,6 +107,30 @@ feature-check:
 check: fmt clippy test
     @echo "All checks passed!"
 
+# Zeroed allocation contract, including infallible capacity-overflow behavior.
+zeroed-alloc-check:
+    cargo test --locked --lib decoder::alloc_util::
+    cargo test --locked --test golden_codec
+    cargo clippy --locked --lib --bench zeroed_alloc -- -D warnings
+    cargo check --locked --no-default-features
+    cargo fmt -p zenwebp -- --check
+
+# Run under run-heavy; exclude only verified idle false positives by PID.
+zeroed-alloc-perf excluded_pids="":
+    #!/usr/bin/env python3
+    import os
+    import subprocess
+    # zenbench 0.1.8 scans command lines for "bench-", including the just
+    # launcher itself. Exclude only this process and its actual ancestors.
+    ancestors = [str(int(pid)) for pid in "{{excluded_pids}}".split(",") if pid]
+    pid = os.getpid()
+    while pid > 1:
+        ancestors.append(str(pid))
+        pid = int(subprocess.check_output(["ps", "-o", "ppid=", "-p", str(pid)]).strip())
+    os.environ["ZENBENCH_LAUNCHER_PIDS"] = ",".join(ancestors)
+    os.environ["CARGO_PROFILE_BENCH_LTO"] = "thin"
+    os.execvp("cargo", ["cargo", "bench", "--locked", "--bench", "zeroed_alloc", "--", "--format=llm"])
+
 # Regenerate the public-API surface snapshots only
 api-doc:
     cargo test --manifest-path apidoc/Cargo.toml
