@@ -14,6 +14,8 @@ earlier history lives in git log and LOG.md.)
 
 ### Changed
 
+- Converge root, fuzz and recompress on the shared core/pixel revisions; preserve legacy metadata-setter coverage and the recompress Profile A calibration. Checked metadata retention remains unsupported. See [qualification](benchmarks/sibling_cohort_2026-11-05.pointer.md) (`a6f84b56`).
+
 - Fresh zeroed allocation uses `bytemuck::allocation::try_zeroed_vec` for
   both allocation preferences, with error policy applied only on failure.
   Fallible allocation errors, infallible OOM handling and capacity-overflow

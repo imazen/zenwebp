@@ -248,13 +248,18 @@ wholefile-lock-sources:
     root = tomllib.loads(Path("Cargo.toml").read_text())
     revision = root["patch"]["crates-io"]["zencodec"]["rev"]
     shared = {"zencodec", "zencodec-io", "zencodec-testkit", "zenmeta"}
+    pixel_revision = root["patch"]["crates-io"]["zenpixels"]["rev"]
     for path in ["Cargo.lock", "fuzz/Cargo.lock", "zenwebp-recompress/Cargo.lock"]:
         packages = tomllib.loads(Path(path).read_text())["package"]
         assert sum(p["name"] == "zencodec" for p in packages) == 1, path
         for package in packages:
             if package["name"] in shared:
                 assert f"rev={revision}#{revision}" in package.get("source", ""), (path, package)
-        print(f"{path}: one zencodec source at {revision}")
+        assert sum(p["name"] == "zenpixels" for p in packages) == 1, path
+        for package in packages:
+            if package["name"] in {"zenpixels", "zenpixels-convert"}:
+                assert f"rev={pixel_revision}#{pixel_revision}" in package.get("source", ""), (path, package)
+        print(f"{path}: one zencodec source at {revision}; one pixel source at {pixel_revision}")
 
 # New shared contracts, with inventory both enabled and absent.
 shared-contract-check:
@@ -323,8 +328,7 @@ sibling-cohort-check:
     RUST_TEST_THREADS=1 cargo test --locked --lib --tests --features "$features"
     cargo test --locked --doc --features "$features"
     just clippy
-    cargo check --manifest-path fuzz/Cargo.toml --bins
-    just recompress-contract-check
+    just wholefile-lock-check
 
 # Report checked metadata admission; this diagnostic does not encode or certify retention.
 sibling-metadata-probe:
