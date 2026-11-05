@@ -516,6 +516,8 @@ required-features = ["_dev"]
 # still resolves to a single source and the `Offer` types unify. Delete this
 # block once zenanalyze-api 0.1.1 / zenanalyze 0.2.x are published.
 [patch.crates-io]
+# The dev-only resampler shares the converged pixel type identity.
+zenresize = { git = "https://github.com/imazen/zenresize", rev = "e3975fb9d6d6b7baa96038a0eb8e27febb37c012" }
 # PNG strip compression requires this tested source; dependency patches do not propagate.
 zenflate = { git = "https://github.com/imazen/zenflate", rev = "a0ea03637a2cc9a193e343018ae2cfb1a6c31edd" }
 zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "1816b4d082234c04c3805411b437b8396040f522" }
@@ -526,8 +528,8 @@ zenpng = { git = "https://github.com/imazen/zenpng", rev = "02a7f0df5f72dd79b0af
 # Merged pixel-context bridge; keep root, fuzz and recompress on one revision.
 zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "fa836abf72afe9826e866dc25712b7c800323962" }
 zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "fa836abf72afe9826e866dc25712b7c800323962" }
-zenanalyze-api = { git = "https://github.com/imazen/zenanalyze", rev = "bb88b42131438fbe4eeb42827f2a5653fc085a6d" }
-zenanalyze = { git = "https://github.com/imazen/zenanalyze", rev = "bb88b42131438fbe4eeb42827f2a5653fc085a6d" }
+zenanalyze-api = { git = "https://github.com/imazen/zenanalyze", rev = "38dc80f73887dafae6bf5ebfe9a03be5ef78ebe0" }
+zenanalyze = { git = "https://github.com/imazen/zenanalyze", rev = "38dc80f73887dafae6bf5ebfe9a03be5ef78ebe0" }
 # The zencodec 0.2 family (the Pulse contract) from one core revision; root, fuzz and
 # recompress patch the same one. zencodec 0.2 is not on crates.io: swap these patches for
 # the released zencodec / zencodec-testkit before releasing.

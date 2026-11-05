@@ -18,7 +18,16 @@ animation-contract-lint:
 # Run clippy with every stable feature (`_benchmarks` needs nightly's
 # `feature(test)`, so `--all-features` cannot build on stable).
 clippy:
-    cargo clippy --all-targets --features "$(python3 -c 'import tomllib; f=tomllib.load(open("Cargo.toml","rb"))["features"]; print(",".join(k for k in f if k not in ("default","_benchmarks")))')" -- -D warnings
+    #!/usr/bin/env bash
+    set -euo pipefail
+    features="$(just stable-features)"
+    [[ -n "$features" ]]
+    printf "Stable features: %s\n" "$features"
+    cargo clippy --locked --all-targets --features "$features" --keep-going -- -D warnings
+
+# Cargo supplies the manifest schema, including on Python versions before 3.11.
+stable-features:
+    @cargo metadata --locked --no-deps --format-version 1 | python3 -c 'import json,sys; f=next(p["features"] for p in json.load(sys.stdin)["packages"] if p["name"]=="zenwebp"); keys=[k for k in f if k not in ("default","_benchmarks")]; assert keys and "analyzer" in keys; print(",".join(keys))'
 
 # Format code + regenerate the public-API surface snapshots (docs/public-api/).
 # The snapshot runner lives in the self-contained apidoc/ package, so it is
@@ -300,3 +309,23 @@ declared-rows-check:
     cargo test --locked --test declared_rows
     cargo test --locked --lib codec::tests::
     cargo clippy --locked --lib --test declared_rows -- -D warnings
+
+# Shared sibling cohort: preserve all existing score profiles and test oracles.
+sibling-cohort-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo fmt --check
+    cargo tree --locked -i zenpixels
+    cargo tree --locked -i zencodec
+    features="$(just stable-features)"
+    [[ -n "$features" ]]
+    printf "Stable features: %s\n" "$features"
+    RUST_TEST_THREADS=1 cargo test --locked --lib --tests --features "$features"
+    cargo test --locked --doc --features "$features"
+    just clippy
+    cargo check --manifest-path fuzz/Cargo.toml --bins
+    just recompress-contract-check
+
+# Report checked metadata admission; this diagnostic does not encode or certify retention.
+sibling-metadata-probe:
+    cargo run --locked --example sibling_metadata_probe

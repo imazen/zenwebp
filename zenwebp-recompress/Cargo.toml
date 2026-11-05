@@ -34,7 +34,7 @@ zenwebp = { path = "..", default-features = false, features = ["std"] }
 zensim = { git = "https://github.com/imazen/zensimx", rev = "bab88fde6aae8aaf54f42767bc1272d90340c095", default-features = false, features = [
     "deprecated-profiles",
 ] }
-zenanalyze = { git = "https://github.com/imazen/zenanalyze", rev = "bb88b42131438fbe4eeb42827f2a5653fc085a6d", default-features = false }
+zenanalyze = { git = "https://github.com/imazen/zenanalyze", rev = "38dc80f73887dafae6bf5ebfe9a03be5ef78ebe0", default-features = false }
 zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "fa836abf72afe9826e866dc25712b7c800323962", default-features = false }
 
 enough = { version = "0.4", default-features = false, features = ["std"] }

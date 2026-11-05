@@ -580,7 +580,7 @@ dependencies = [
 [[package]]
 name = "zenanalyze"
 version = "0.2.0"
-source = "git+https://github.com/imazen/zenanalyze?rev=8ca647c525cf488c61bbf35475ca8ba3db6b628e#8ca647c525cf488c61bbf35475ca8ba3db6b628e"
+source = "git+https://github.com/imazen/zenanalyze?rev=38dc80f73887dafae6bf5ebfe9a03be5ef78ebe0#38dc80f73887dafae6bf5ebfe9a03be5ef78ebe0"
 dependencies = [
  "archmage",
  "garb",
@@ -604,11 +604,12 @@ dependencies = [
 [[package]]
 name = "zencodec"
 version = "0.2.0"
-source = "git+https://github.com/imazen/zencodec?rev=feb09f9fd25e90e49a30d7161db8f3b558dfb2a6#feb09f9fd25e90e49a30d7161db8f3b558dfb2a6"
+source = "git+https://github.com/imazen/zencodec?rev=1816b4d082234c04c3805411b437b8396040f522#1816b4d082234c04c3805411b437b8396040f522"
 dependencies = [
  "almost-enough",
  "enough",
  "how-far",
+ "libm",
  "spin",
  "whereat",
  "zenpixels",
@@ -616,8 +617,8 @@ dependencies = [
 
 [[package]]
 name = "zenpixels"
-version = "0.2.17"
-source = "git+https://github.com/imazen/zenpixels?rev=283655c5424e0ad7ebc6d2acd94670fac1e29158#283655c5424e0ad7ebc6d2acd94670fac1e29158"
+version = "0.3.1"
+source = "git+https://github.com/imazen/zenpixels?rev=fa836abf72afe9826e866dc25712b7c800323962#fa836abf72afe9826e866dc25712b7c800323962"
 dependencies = [
  "bytemuck",
  "imgref",
@@ -627,8 +628,8 @@ dependencies = [
 
 [[package]]
 name = "zenpixels-convert"
-version = "0.2.17"
-source = "git+https://github.com/imazen/zenpixels?rev=283655c5424e0ad7ebc6d2acd94670fac1e29158#283655c5424e0ad7ebc6d2acd94670fac1e29158"
+version = "0.3.1"
+source = "git+https://github.com/imazen/zenpixels?rev=fa836abf72afe9826e866dc25712b7c800323962#fa836abf72afe9826e866dc25712b7c800323962"
 dependencies = [
  "archmage",
  "bytemuck",
