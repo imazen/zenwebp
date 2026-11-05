@@ -5,6 +5,9 @@ All benchmarks use runtime SIMD dispatch (no `-C target-cpu=native`).
 
 Last updated: 2026-03-26.
 
+Fresh zeroed allocation update (2026-11-05):
+[helper unification, measurements and related allocation audit](../benchmarks/zeroed_alloc_2026-11-05.md).
+
 ## Results Summary
 
 ### Lossless Encode (512x512 photo, Q75)

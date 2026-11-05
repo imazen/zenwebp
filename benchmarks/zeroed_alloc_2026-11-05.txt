@@ -1,0 +1,51 @@
+# zenbench results (complete)
+# git: 2e58d1e54a285bb3ae2db629cc2a3202411cd08e
+# 2026-11-05T05:49:33Z
+#
+# Re-read this file instead of re-running the benchmark.
+# Formats:  cargo bench -- --format=llm|csv|md|json
+# Env var:  ZENBENCH_FORMAT=llm cargo bench
+# Disable:  ZENBENCH_NO_SAVE=1 cargo bench
+#
+# Fields: group | benchmark | vs_base comparison | min mean median mad | throughput | n cv rounds calls
+#
+group=zeroed_allocate_0 benchmark=vec  |  vs_base=baseline  |  min=0.2ns mean=0.3ns median=0.4ns mad=0.006ns  |  n=30 cv=22.6% rounds=30 calls=1000000 mean_ci=[0.3ns 0.3ns] cold=110.0ns
+group=zeroed_allocate_0 benchmark=reserve_resize  |  vs_base_pct=+585.60 ci=[+577.93% +594.43%] significant=true effect=36.43 p=0.0000  |  min=2.2ns mean=2.2ns median=2.2ns mad=0.004ns  |  n=30 cv=0.3% rounds=30 calls=1000000 mean_ci=[2.2ns 2.2ns] cold=101.0ns
+group=zeroed_allocate_0 benchmark=unified_Fallible  |  vs_base_pct=+298.70 ci=[+291.12% +307.47%] significant=true effect=18.57 p=0.0000  |  min=1.3ns mean=1.3ns median=1.3ns mad=0.004ns  |  n=30 cv=0.5% rounds=30 calls=1000000 mean_ci=[1.3ns 1.3ns] cold=20.0ns
+group=zeroed_allocate_0 benchmark=unified_Infallible  |  vs_base_pct=+298.67 ci=[+291.04% +307.29%] significant=true effect=18.33 p=0.0000  |  min=1.3ns mean=1.3ns median=1.3ns mad=0.004ns  |  n=30 cv=1.1% rounds=30 calls=1000000 mean_ci=[1.3ns 1.3ns] cold=20.0ns
+group=zeroed_fill_0 benchmark=vec  |  vs_base=baseline  |  min=38.6ns mean=39.9ns median=39.8ns mad=0.7ns  |  n=30 cv=1.9% rounds=30 calls=24390 mean_ci=[39.6ns 40.2ns] cold=100.0ns
+group=zeroed_fill_0 benchmark=reserve_resize  |  vs_base_pct=+0.27 ci=[-0.63% +1.21%] significant=false effect=0.13 p=0.6808  |  min=38.6ns mean=40.0ns median=39.9ns mad=1.1ns  |  n=30 cv=2.2% rounds=30 calls=24390 mean_ci=[39.7ns 40.3ns] cold=50.0ns
+group=zeroed_fill_0 benchmark=unified_Fallible  |  vs_base_pct=+2.12 ci=[+1.36% +2.90%] significant=true effect=1.32 p=0.0001  |  min=40.0ns mean=40.7ns median=40.8ns mad=0.6ns  |  n=30 cv=1.2% rounds=30 calls=24390 mean_ci=[40.6ns 40.9ns] cold=60.0ns
+group=zeroed_fill_0 benchmark=unified_Infallible  |  vs_base_pct=+2.24 ci=[+1.62% +2.84%] significant=true effect=1.35 p=0.0000  |  min=39.8ns mean=40.8ns median=40.9ns mad=0.6ns  |  n=30 cv=1.3% rounds=30 calls=24390 mean_ci=[40.6ns 41.0ns] cold=60.0ns
+group=zeroed_allocate_16384 benchmark=vec  |  vs_base=baseline  |  min=107.7ns mean=110.3ns median=110.8ns mad=1.4ns  |  n=30 cv=1.4% rounds=30 calls=8849 mean_ci=[109.7ns 110.8ns] cold=240.0ns
+group=zeroed_allocate_16384 benchmark=reserve_resize  |  vs_base_pct=+2.71 ci=[+2.15% +3.27%] significant=true effect=1.84 p=0.0000  |  min=110.3ns mean=113.2ns median=113.3ns mad=1.7ns  |  n=30 cv=1.5% rounds=30 calls=8849 mean_ci=[112.6ns 113.8ns] cold=220.0ns
+group=zeroed_allocate_16384 benchmark=unified_Fallible  |  vs_base_pct=+1.39 ci=[+1.00% +1.79%] significant=false effect=1.02 p=0.0000  |  min=109.7ns mean=111.9ns median=112.2ns mad=2.0ns  |  n=30 cv=1.3% rounds=30 calls=8849 mean_ci=[111.4ns 112.4ns] cold=131.0ns
+group=zeroed_allocate_16384 benchmark=unified_Infallible  |  vs_base_pct=+1.88 ci=[+1.33% +2.42%] significant=true effect=1.45 p=0.0000  |  min=109.8ns mean=112.3ns median=112.6ns mad=1.3ns  |  n=30 cv=1.1% rounds=30 calls=8849 mean_ci=[111.9ns 112.8ns] cold=130.0ns
+group=zeroed_fill_16384 benchmark=vec  |  vs_base=baseline  |  min=201.3ns mean=203.5ns median=202.5ns mad=1.2ns  |  n=30 cv=1.0% rounds=30 calls=4901 mean_ci=[202.8ns 204.2ns] cold=250.0ns
+group=zeroed_fill_16384 benchmark=reserve_resize  |  vs_base_pct=+2.04 ci=[+1.75% +2.34%] significant=true effect=2.04 p=0.0000  |  min=205.0ns mean=207.4ns median=206.2ns mad=1.1ns  |  n=30 cv=1.2% rounds=30 calls=4901 mean_ci=[206.6ns 208.3ns] cold=441.0ns
+group=zeroed_fill_16384 benchmark=unified_Fallible  |  vs_base_pct=+0.98 ci=[+0.70% +1.24%] significant=false effect=0.90 p=0.0000  |  min=203.0ns mean=206.0ns median=204.8ns mad=1.9ns  |  n=30 cv=1.2% rounds=30 calls=4901 mean_ci=[205.2ns 206.9ns] cold=220.0ns
+group=zeroed_fill_16384 benchmark=unified_Infallible  |  vs_base_pct=+1.00 ci=[+0.60% +1.40%] significant=false effect=1.00 p=0.0003  |  min=202.3ns mean=205.3ns median=204.5ns mad=1.1ns  |  n=30 cv=1.0% rounds=30 calls=4901 mean_ci=[204.6ns 206.1ns] cold=220.0ns
+group=zeroed_allocate_262144 benchmark=vec  |  vs_base=baseline  |  min=1.52µs mean=1.55µs median=1.55µs mad=26.9ns  |  n=30 cv=1.1% rounds=30 calls=635 mean_ci=[1.54µs 1.56µs] cold=1.58µs
+group=zeroed_allocate_262144 benchmark=reserve_resize  |  vs_base_pct=+0.13 ci=[-0.17% +0.45%] significant=false effect=0.11 p=0.2850  |  min=1.52µs mean=1.55µs median=1.55µs mad=27.1ns  |  n=30 cv=1.3% rounds=30 calls=635 mean_ci=[1.54µs 1.56µs] cold=1.64µs
+group=zeroed_allocate_262144 benchmark=unified_Fallible  |  vs_base_pct=+0.25 ci=[-0.05% +0.55%] significant=false effect=0.19 p=0.0505  |  min=1.52µs mean=1.56µs median=1.55µs mad=29.7ns  |  n=30 cv=1.6% rounds=30 calls=635 mean_ci=[1.55µs 1.56µs] cold=1.58µs
+group=zeroed_allocate_262144 benchmark=unified_Infallible  |  vs_base_pct=+0.27 ci=[+0.05% +0.50%] significant=false effect=0.22 p=0.0222  |  min=1.53µs mean=1.55µs median=1.55µs mad=29.0ns  |  n=30 cv=1.3% rounds=30 calls=635 mean_ci=[1.55µs 1.56µs] cold=1.57µs
+group=zeroed_fill_262144 benchmark=vec  |  vs_base=baseline  |  min=2.99µs mean=3.05µs median=3.06µs mad=21.7ns  |  n=30 cv=1.0% rounds=30 calls=324 mean_ci=[3.03µs 3.06µs] cold=3.11µs
+group=zeroed_fill_262144 benchmark=reserve_resize  |  vs_base_pct=+0.27 ci=[-0.03% +0.56%] significant=false effect=0.29 p=0.0358  |  min=2.99µs mean=3.06µs median=3.07µs mad=24.9ns  |  n=30 cv=1.1% rounds=30 calls=324 mean_ci=[3.04µs 3.07µs] cold=3.30µs
+group=zeroed_fill_262144 benchmark=unified_Fallible  |  vs_base_pct=+0.09 ci=[-0.27% +0.46%] significant=false effect=0.09 p=0.5449  |  min=2.99µs mean=3.05µs median=3.07µs mad=26.3ns  |  n=30 cv=1.1% rounds=30 calls=324 mean_ci=[3.04µs 3.06µs] cold=3.13µs
+group=zeroed_fill_262144 benchmark=unified_Infallible  |  vs_base_pct=+0.15 ci=[-0.29% +0.61%] significant=false effect=0.14 p=0.5372  |  min=2.99µs mean=3.05µs median=3.05µs mad=42.6ns  |  n=30 cv=1.1% rounds=30 calls=324 mean_ci=[3.04µs 3.06µs] cold=3.08µs
+group=zeroed_allocate_4194304 benchmark=vec  |  vs_base=baseline  |  min=27.48µs mean=28.18µs median=28.25µs mad=511.9ns  |  n=30 cv=1.5% rounds=30 calls=35 mean_ci=[28.04µs 28.34µs] cold=27.43µs
+group=zeroed_allocate_4194304 benchmark=reserve_resize  |  vs_base_pct=+0.31 ci=[+0.01% +0.58%] significant=false effect=0.23 p=0.0465  |  min=27.48µs mean=28.28µs median=28.36µs mad=376.8ns  |  n=30 cv=1.7% rounds=30 calls=35 mean_ci=[28.11µs 28.45µs] cold=27.77µs
+group=zeroed_allocate_4194304 benchmark=unified_Fallible  |  vs_base_pct=+0.69 ci=[+0.22% +1.20%] significant=false effect=0.42 p=0.0702  |  min=27.46µs mean=28.28µs median=28.29µs mad=712.9ns  |  n=30 cv=2.0% rounds=30 calls=35 mean_ci=[28.08µs 28.48µs] cold=28.21µs
+group=zeroed_allocate_4194304 benchmark=unified_Infallible  |  vs_base_pct=+0.36 ci=[-0.03% +0.75%] significant=false effect=0.26 p=0.1332  |  min=27.46µs mean=28.24µs median=28.31µs mad=496.9ns  |  n=30 cv=1.6% rounds=30 calls=35 mean_ci=[28.09µs 28.40µs] cold=31.93µs
+group=zeroed_fill_4194304 benchmark=vec  |  vs_base=baseline  |  min=57.77µs mean=58.59µs median=58.61µs mad=429.7ns  |  n=30 cv=0.6% rounds=30 calls=85 mean_ci=[58.46µs 58.72µs] cold=58.41µs
+group=zeroed_fill_4194304 benchmark=reserve_resize  |  vs_base_pct=-0.05 ci=[-0.26% +0.15%] significant=false effect=-0.09 p=0.5724  |  min=57.47µs mean=58.52µs median=58.57µs mad=299.1ns  |  n=30 cv=0.6% rounds=30 calls=85 mean_ci=[58.39µs 58.65µs] cold=58.12µs
+group=zeroed_fill_4194304 benchmark=unified_Fallible  |  vs_base_pct=-0.09 ci=[-0.35% +0.14%] significant=false effect=-0.16 p=0.5462  |  min=57.59µs mean=58.54µs median=58.54µs mad=367.4ns  |  n=30 cv=0.7% rounds=30 calls=85 mean_ci=[58.40µs 58.68µs] cold=60.23µs
+group=zeroed_fill_4194304 benchmark=unified_Infallible  |  vs_base_pct=-0.16 ci=[-0.43% +0.12%] significant=false effect=-0.24 p=0.2502  |  min=57.60µs mean=58.58µs median=58.59µs mad=355.0ns  |  n=30 cv=0.7% rounds=30 calls=85 mean_ci=[58.42µs 58.73µs] cold=64.13µs
+group=zeroed_allocate_67108864 benchmark=vec  |  vs_base=baseline  |  min=5.43µs mean=5.65µs median=5.67µs mad=26.9ns  |  n=5 cv=2.3% rounds=5 calls=176 mean_ci=[5.53µs 5.74µs] cold=5.46µs
+group=zeroed_allocate_67108864 benchmark=reserve_resize  |  vs_base_pct=+370370.57 ci=[+369629.80% +371111.33%] significant=true effect=575.90 p=1.0000  |  min=21.06ms mean=21.16ms median=21.16ms mad=83.73µs  |  n=5 cv=0.5% rounds=5 calls=176 mean_ci=[21.09ms 21.25ms] cold=24.44ms
+group=zeroed_allocate_67108864 benchmark=unified_Fallible  |  vs_base_pct=+1.04 ci=[-0.67% +2.79%] significant=false effect=0.46 p=1.0000  |  min=5.55µs mean=5.71µs median=5.69µs mad=34.9ns  |  n=5 cv=2.1% rounds=5 calls=176 mean_ci=[5.61µs 5.81µs] cold=8.19µs
+group=zeroed_allocate_67108864 benchmark=unified_Infallible  |  vs_base_pct=+1.30 ci=[+0.73% +1.99%] significant=false effect=2.16 p=1.0000  |  min=5.66µs mean=5.71µs median=5.69µs mad=57.8ns  |  n=5 cv=0.9% rounds=5 calls=176 mean_ci=[5.67µs 5.76µs] cold=5.27µs
+group=zeroed_fill_67108864 benchmark=vec  |  vs_base=baseline  |  min=20.89ms mean=21.48ms median=21.44ms mad=206.43µs  |  n=23 cv=1.4% rounds=23 calls=1 mean_ci=[21.36ms 21.60ms] cold=20.81ms
+group=zeroed_fill_67108864 benchmark=reserve_resize  |  vs_base_pct=+10.01 ci=[+9.37% +10.57%] significant=true effect=8.29 p=0.0001  |  min=23.05ms mean=23.53ms median=23.52ms mad=173.36µs  |  n=23 cv=1.2% rounds=23 calls=1 mean_ci=[23.43ms 23.65ms] cold=23.80ms
+group=zeroed_fill_67108864 benchmark=unified_Fallible  |  vs_base_pct=+0.07 ci=[-0.55% +0.64%] significant=false effect=0.05 p=0.6766  |  min=20.83ms mean=21.42ms median=21.42ms mad=341.24µs  |  n=23 cv=1.6% rounds=23 calls=1 mean_ci=[21.29ms 21.56ms] cold=21.70ms
+group=zeroed_fill_67108864 benchmark=unified_Infallible  |  vs_base_pct=-0.67 ci=[-1.29% -0.03%] significant=false effect=-0.48 p=0.0534  |  min=20.87ms mean=21.34ms median=21.34ms mad=387.55µs  |  n=23 cv=1.3% rounds=23 calls=1 mean_ci=[21.22ms 21.45ms] cold=21.74ms
