@@ -10,6 +10,7 @@ use zencodec::encode::{AnimationFrameEncoder, EncodeJob, EncoderConfig};
 use zenpixels::{PixelBuffer, PixelDescriptor};
 use zenwebp::zencodec::{WebpDecoderConfig, WebpEncoderConfig};
 
+#[allow(deprecated)] // Intentional legacy metadata-setter coverage.
 fn encode(lossy: bool, icc: bool) -> Vec<u8> {
     let data: Vec<_> = (0..128 * 256 * 4)
         .map(|i| {

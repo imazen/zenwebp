@@ -5087,6 +5087,7 @@ mod tests {
     /// resolver must now synthesize the bundled Display P3 ICC and embed it in
     /// the ICCP chunk.
     #[test]
+    #[allow(deprecated)] // Intentional legacy metadata-setter coverage.
     fn cicp_only_source_synthesizes_icc() {
         let buf = make_rgb8_pixels(32, 32);
         let meta = Metadata::none().with_cicp(Cicp::DISPLAY_P3);
@@ -5123,6 +5124,7 @@ mod tests {
     /// `IccSynthesisUnavailable`.)
     #[cfg(not(feature = "cms"))]
     #[test]
+    #[allow(deprecated)] // Intentional legacy metadata-setter coverage.
     fn cicp_pq_without_cms_embeds_bundled_icc() {
         let buf = make_rgb8_pixels(32, 32);
         let meta = Metadata::none().with_cicp(Cicp::BT2100_PQ);
@@ -5144,6 +5146,7 @@ mod tests {
     /// (moxcms-generated) ICC and the encode succeeds.
     #[cfg(feature = "cms")]
     #[test]
+    #[allow(deprecated)] // Intentional legacy metadata-setter coverage.
     fn cicp_pq_with_cms_synthesizes_icc() {
         let buf = make_rgb8_pixels(32, 32);
         let meta = Metadata::none().with_cicp(Cicp::BT2100_PQ);
@@ -5166,6 +5169,7 @@ mod tests {
     /// assumed default and the bundled table has no sRGB profile, so synthesizing
     /// one would be redundant bytes. (Guards against over-eager synthesis.)
     #[test]
+    #[allow(deprecated)] // Intentional legacy metadata-setter coverage.
     fn cicp_only_srgb_source_embeds_no_icc() {
         let buf = make_rgb8_pixels(32, 32);
         let meta = Metadata::none().with_cicp(Cicp::SRGB);
@@ -5187,6 +5191,7 @@ mod tests {
     /// An explicit source ICC is embedded verbatim (KeepSource disposition),
     /// confirming the resolver doesn't disturb the existing ICC path.
     #[test]
+    #[allow(deprecated)] // Intentional legacy metadata-setter coverage.
     fn source_icc_is_kept_verbatim() {
         let buf = make_rgb8_pixels(32, 32);
         // Use the bundled Display P3 profile as a stand-in for a real source ICC.
@@ -5215,6 +5220,7 @@ mod tests {
     /// Decode-side authority: a WebP carrying an ICCP chunk must report
     /// `ColorAuthority::Icc` on its `source_color` (WebP's only color carrier).
     #[test]
+    #[allow(deprecated)] // Intentional legacy metadata-setter coverage.
     fn decode_sets_icc_color_authority() {
         let buf = make_rgb8_pixels(32, 32);
         let src_icc: Arc<[u8]> = Arc::from(

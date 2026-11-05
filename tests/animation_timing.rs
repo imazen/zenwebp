@@ -347,6 +347,7 @@ mod native_contract {
     }
 
     #[test]
+    #[allow(deprecated)] // Intentional legacy metadata-setter coverage.
     fn animation_retains_metadata_and_synthesizes_cicp_color_like_still_images() {
         let pixels = pixels();
         let icc = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;

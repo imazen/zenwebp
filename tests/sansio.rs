@@ -373,6 +373,7 @@ fn complete_animation_limits_are_checked_after_early_header() {
 }
 
 #[test]
+#[allow(deprecated)] // Intentional legacy metadata-setter coverage.
 fn structured_orientation_uses_exif_without_rotating_encoded_pixels() {
     use zencodec::{Metadata, MetadataPolicy, Orientation};
     let image = tk::TestImage::rgb8_gradient(19, 11);

@@ -264,6 +264,7 @@ fn grayf32_lossy_roundtrip_within_tolerance() {
 /// turn into a linear ICC profile next to sRGB samples: the profile must say
 /// sRGB, with the CICP's primaries.
 #[test]
+#[allow(deprecated)] // Intentional legacy metadata-setter coverage.
 fn a_linear_cicp_on_f32_input_is_written_as_srgb() {
     use std::borrow::Cow;
     use zencodec::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
