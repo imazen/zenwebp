@@ -115,21 +115,10 @@ zeroed-alloc-check:
     cargo check --locked --no-default-features
     cargo fmt -p zenwebp -- --check
 
-# Run under run-heavy; exclude only verified idle false positives by PID.
-zeroed-alloc-perf excluded_pids="":
-    #!/usr/bin/env python3
-    import os
-    import subprocess
-    # zenbench 0.1.8 scans command lines for "bench-", including the just
-    # launcher itself. Exclude only this process and its actual ancestors.
-    ancestors = [str(int(pid)) for pid in "{{excluded_pids}}".split(",") if pid]
-    pid = os.getpid()
-    while pid > 1:
-        ancestors.append(str(pid))
-        pid = int(subprocess.check_output(["ps", "-o", "ppid=", "-p", str(pid)]).strip())
-    os.environ["ZENBENCH_LAUNCHER_PIDS"] = ",".join(ancestors)
-    os.environ["CARGO_PROFILE_BENCH_LTO"] = "thin"
-    os.execvp("cargo", ["cargo", "bench", "--locked", "--bench", "zeroed_alloc", "--", "--format=llm"])
+# Run under run-heavy. --no-busy-gate requires checking host load manually;
+# it retains the exclusive benchmark file lock.
+zeroed-alloc-perf args="":
+    CARGO_PROFILE_BENCH_LTO=thin cargo bench --locked --bench zeroed_alloc -- --format=llm {{args}}
 
 # Regenerate the public-API surface snapshots only
 api-doc:

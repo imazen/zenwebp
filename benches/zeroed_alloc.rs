@@ -68,4 +68,23 @@ fn allocations(suite: &mut Suite) {
     }
 }
 
-zenbench::main!(allocations);
+fn main() {
+    let suite = |suite: &mut Suite| {
+        if let Some(filter) =
+            std::env::args().find_map(|arg| arg.strip_prefix("--group=").map(String::from))
+        {
+            suite.set_group_filter(filter);
+        }
+        allocations(suite);
+    };
+    // The locked zenbench 0.1.8 can classify idle agents whose prompts mention
+    // zenbench as competing benchmarks. Match newer runners' explicit opt-out
+    // for a host whose load was checked by the caller. The file lock remains.
+    let result = if std::env::args().any(|arg| arg == "--no-busy-gate") {
+        eprintln!("resource scanning disabled; caller must verify host load");
+        zenbench::run_gated(zenbench::GateConfig::disabled(), suite)
+    } else {
+        zenbench::run(suite)
+    };
+    zenbench::postprocess_result(&result);
+}
