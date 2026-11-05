@@ -92,7 +92,7 @@ pub(crate) fn encode_vp8l_with_alloc(
     // On little-endian, ARGB u32 has byte order [B,G,R,A] = BGRA,
     // so we use garb's SIMD-accelerated rgba_to_bgra / rgb_to_bgra.
     let mut argb: Vec<u32> =
-        crate::decoder::alloc_util::alloc_filled(alloc_pref, false, w * h, 0u32)
+        crate::decoder::alloc_util::alloc_zeroed_typed(alloc_pref, false, w * h)
             .map_err(crate::encoder::api::alloc_failed_error)?;
     #[cfg(target_endian = "little")]
     {

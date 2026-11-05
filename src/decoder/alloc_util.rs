@@ -54,6 +54,7 @@
 //! references, histograms, token buffers) is still infallible; the pre-flight
 //! estimate is the guard for those.
 
+#[cfg(test)]
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -109,9 +110,19 @@ pub(crate) fn alloc_zeroed(
     site_default_fallible: bool,
     n: usize,
 ) -> Result<Vec<u8>, AllocFailed> {
+    alloc_zeroed_typed(pref, site_default_fallible, n)
+}
+
+/// Allocate elements whose all-zero representation is valid.
+#[inline]
+pub(crate) fn alloc_zeroed_typed<T: bytemuck::Zeroable>(
+    pref: AllocPreference,
+    site_default_fallible: bool,
+    n: usize,
+) -> Result<Vec<T>, AllocFailed> {
     bytemuck::allocation::try_zeroed_vec(n).map_err(|()| {
         if !resolve_fallible(pref, site_default_fallible) {
-            let layout = core::alloc::Layout::array::<u8>(n).expect("capacity overflow");
+            let layout = core::alloc::Layout::array::<T>(n).expect("capacity overflow");
             alloc::alloc::handle_alloc_error(layout);
         }
         AllocFailed
@@ -164,11 +175,12 @@ pub(crate) fn alloc_with_capacity(
 
 /// Allocate `n` elements of `value` (any `Clone` element type), honoring the
 /// per-site fallibility. The element-generic sibling of [`alloc_zeroed`] for
-/// buffers such as the VP8L `Vec<u32>` ARGB plane.
+/// arbitrary nonzero fills.
 ///
 /// * fallible → `try_reserve_exact(n)` then fill, returning [`AllocFailed`]
 ///   on allocation failure.
 /// * infallible → `vec![value; n]` (aborts on OOM).
+#[cfg(test)]
 #[inline]
 pub(crate) fn alloc_filled<T: Clone>(
     pref: AllocPreference,
@@ -189,6 +201,89 @@ pub(crate) fn alloc_filled<T: Clone>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn typed_zeros_and_zero_sized_elements() {
+        for pref in [
+            AllocPreference::CodecDefault,
+            AllocPreference::Fallible,
+            AllocPreference::Infallible,
+        ] {
+            for site in [false, true] {
+                let words = alloc_zeroed_typed::<u32>(pref, site, 4097).unwrap();
+                assert_eq!(words.len(), 4097);
+                assert!(words.iter().all(|&v| v == 0));
+                let floats = alloc_zeroed_typed::<f32>(pref, site, 17).unwrap();
+                assert!(floats.iter().all(|v| v.to_bits() == 0));
+                let zst = alloc_zeroed_typed::<()>(pref, site, usize::MAX).unwrap();
+                assert_eq!(zst.len(), usize::MAX);
+                assert_eq!(zst.capacity(), usize::MAX);
+            }
+        }
+        assert!(alloc_zeroed_typed::<u32>(AllocPreference::Fallible, false, usize::MAX).is_err());
+    }
+
+    // A valid layout must exercise allocator refusal, independently of overflow.
+    // Limit only the child process; no real host-sized allocation is attempted.
+    #[cfg(all(feature = "std", target_os = "linux"))]
+    #[test]
+    fn valid_layout_allocation_failure() {
+        use std::io::Write;
+        use std::os::unix::process::ExitStatusExt;
+        use std::process::Command;
+        use std::string::String;
+        const PROBE: &str = "ZENWEBP_ALLOC_FAILURE_PROBE";
+        if let Ok(mode) = std::env::var(PROBE) {
+            let (pref, site, fallible) = match mode.as_str() {
+                "fallible" => (AllocPreference::Fallible, false, true),
+                "infallible" => (AllocPreference::Infallible, true, false),
+                "default-true" => (AllocPreference::CodecDefault, true, true),
+                "default-false" => (AllocPreference::CodecDefault, false, false),
+                _ => panic!("unknown probe mode"),
+            };
+            std::io::stderr()
+                .write_all(b"ALLOCATION_PROBE_READY\n")
+                .unwrap();
+            let result = alloc_zeroed(pref, site, 1 << 30);
+            assert!(fallible, "infallible allocator handler returned");
+            assert_eq!(result, Err(AllocFailed));
+            return;
+        }
+        assert!(core::alloc::Layout::array::<u8>(1 << 30).is_ok());
+        for (mode, fallible) in [
+            ("fallible", true),
+            ("infallible", false),
+            ("default-true", true),
+            ("default-false", false),
+        ] {
+            let output = Command::new("sh")
+                .args([
+                    "-c",
+                    "ulimit -c 0; ulimit -v 262144; exec \"$@\"",
+                    "allocation-probe",
+                ])
+                .arg(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "decoder::alloc_util::tests::valid_layout_allocation_failure",
+                    "--nocapture",
+                ])
+                .env(PROBE, mode)
+                .output()
+                .unwrap();
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                stderr.contains("ALLOCATION_PROBE_READY"),
+                "{mode}: {stderr}"
+            );
+            if fallible {
+                assert!(output.status.success(), "{mode}: {stderr}");
+            } else {
+                assert_eq!(output.status.signal(), Some(6), "{mode}: {stderr}");
+                assert!(stderr.contains("memory allocation of"), "{mode}: {stderr}");
+            }
+        }
+    }
 
     #[test]
     fn alloc_filled_all_modes_equal_contents() {
