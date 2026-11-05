@@ -1150,3 +1150,29 @@ adds allocation-free canvas admission, strip/protocol validation and copies only
 visible rows. PixelSlice rejects strides not divisible by pixel size before adapter entry. `just declared-rows-check` exercises these routes;
 qualification is recorded in `docs/declared-rows.md`. This remains full-raster
 buffering with AT_FINISH output, not a low-memory streaming guarantee.
+
+## Known Bugs — shared-core checked metadata boundary (2026-11-05)
+
+The isolated sibling-cohort update retains main7f7ab908 and selects core1816b4d0,
+pixelsfa836abf, analyzer38dc80f7 and PNG02a7f0df. Root/fuzz/recompress metadata
+resolves one core/pixel identity. The dev resampler uses e3975fb9. Recompress
+retains zensim bab88fde and Profile A; calibration tables are unchanged.
+
+Default runtime:831 pass,zero fail,11existing ignores;33doctests pass,three
+existing ignores. Strict default lint reports11deprecated with_metadata_policy
+calls,with13source call sites across six files under all configurations. The
+recommended try_set/try_with_metadata_policy boundary defaults to refusal: this
+adapter has no override. The reproducible sibling-metadata-probe prints rejection
+for all three cases(empty,ICC,CICP),each UnsupportedOperation::MetadataRetention.
+The existing legacy setter still passes its byte-level metadata tests. Adopting
+the checked path would add an end-to-end retention obligation across still,
+animation and later mutators,including refusal of unsupported fields.
+
+This requires coordinator scope direction: implement and qualify the existing
+checked trait contract,or explicitly preserve legacy compatibility coverage and
+leave checked retention unsupported. No metadata expectations,score profiles,
+thresholds or established ignores were changed; no WebP main push is attempted.
+The first harness used just --quiet for a feature selector,which suppressed its
+output:that run is DEFAULT coverage only. The corrected selector prints all18
+stable features and fails on empty output; full feature/fuzz/recompress gates
+remain pending. Receipts:benchmarks/sibling_cohort_2026-11-05.pointer.md.
