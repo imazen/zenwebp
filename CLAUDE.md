@@ -1164,3 +1164,11 @@ analyzer38dc80f7,PNG02a7f0df,dev resamplere3975fb9. Recompress keeps zensim
 bab88fde and Profile A; the existing calibration tables are unchanged.
 Qualification and compatibility limits:
 [cohort receipt](benchmarks/sibling_cohort_2026-11-05.pointer.md).
+
+### Gray input and output color (verified 2026-11-06)
+
+WebP expands L8/La8 input to RGB/RGBA. `resolve_webp_icc` must therefore
+resolve color using 3/4 output channels. The shared pixel adapter also accepts
+`GRAYA8_SRGB` as La8. `just gray-output-color-check` covers CICP-only input,
+the RGB ICC signature, and exact independent libwebp reconstruction of gray
+and alpha samples. The original channel-count negative control failed.

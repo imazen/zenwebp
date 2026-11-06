@@ -1031,6 +1031,14 @@ fn pixels_to_webp_input<'a>(
             h,
             stride_pixels,
         ))
+    } else if desc == PixelDescriptor::GRAYA8_SRGB {
+        Ok((
+            Cow::Borrowed(pixels.as_strided_bytes()),
+            PixelLayout::La8,
+            w,
+            h,
+            stride_pixels,
+        ))
     } else if desc == PixelDescriptor::RGBF32_LINEAR {
         let raw = pixels.contiguous_bytes();
         let floats = as_f32_slice(&raw);
@@ -3683,9 +3691,11 @@ fn resolve_webp_icc(
     policy: zencodec::ColorEmitPolicy,
     layout: PixelLayout,
 ) -> Result<Option<alloc::borrow::Cow<'_, [u8]>>, At<EncodeError>> {
+    // WebP expands luma inputs to RGB/RGBA; its ICC describes those output
+    // channels, rather than the caller's one/two-channel input storage.
     let channels = match layout {
-        PixelLayout::L8 => 1,
-        PixelLayout::La8 => 2,
+        PixelLayout::L8 => 3,
+        PixelLayout::La8 => 4,
         PixelLayout::Rgb8 | PixelLayout::Bgr8 | PixelLayout::Yuv420 => 3,
         PixelLayout::Rgba8 | PixelLayout::Bgra8 | PixelLayout::Argb8 => 4,
     };
@@ -5080,6 +5090,69 @@ mod tests {
 
     use zencodec::Metadata;
     use zenpixels::Cicp;
+
+    #[test]
+    fn gray_cicp_resolves_an_rgb_profile_for_webp_output() {
+        for layout in [PixelLayout::L8, PixelLayout::La8] {
+            let profile = resolve_webp_icc(
+                None,
+                Some(Cicp::DISPLAY_P3),
+                zencodec::ColorEmitPolicy::Balanced,
+                layout,
+            )
+            .unwrap()
+            .expect("gray input expands to RGB and needs its color profile");
+            assert_eq!(&profile[16..20], b"RGB ", "{layout:?} output profile class");
+        }
+    }
+
+    #[test]
+    #[allow(deprecated)] // Intentional legacy metadata setter, as in the RGB controls.
+    fn gray_cicp_keeps_pixels_and_rgb_icc_through_encode() {
+        for alpha in [false, true] {
+            let descriptor = if alpha {
+                PixelDescriptor::GRAYA8_SRGB
+            } else {
+                PixelDescriptor::GRAY8_SRGB
+            };
+            let mut buffer = PixelBuffer::new(2, 2, descriptor);
+            let gray = [20_u8, 60, 90, 180];
+            let opacity = [255_u8, 128, 200, 17];
+            let mut expected = Vec::new();
+            for y in 0..2_u32 {
+                let mut slice = buffer.as_slice_mut();
+                let row = slice.row_mut(y);
+                for x in 0..2_usize {
+                    let i = y as usize * 2 + x;
+                    row[x * if alpha { 2 } else { 1 }] = gray[i];
+                    expected.extend_from_slice(&[gray[i]; 3]);
+                    if alpha {
+                        row[x * 2 + 1] = opacity[i];
+                        expected.push(opacity[i]);
+                    }
+                }
+            }
+            let output = WebpEncoderConfig::lossless()
+                .job()
+                .with_metadata_policy(
+                    Metadata::none().with_cicp(Cicp::DISPLAY_P3),
+                    zencodec::MetadataPolicy::PreserveExact,
+                )
+                .encoder()
+                .unwrap()
+                .encode(buffer.as_slice())
+                .unwrap();
+            let info = crate::ImageInfo::from_webp(output.data()).unwrap();
+            let profile = info
+                .icc_profile
+                .expect("expanded gray output needs its RGB profile");
+            assert_eq!(&profile[16..20], b"RGB ");
+            let independent = webp::Decoder::new(output.data())
+                .decode()
+                .expect("independent libwebp decode");
+            assert_eq!(&*independent, expected.as_slice(), "alpha={alpha}");
+        }
+    }
 
     /// Encode an RGB8 image whose `Metadata` carries ONLY a CICP (Display P3)
     /// and no ICC. WebP has no CICP carrier, so before the fix this produced an

@@ -333,3 +333,9 @@ sibling-cohort-check:
 # Report checked metadata admission; this diagnostic does not encode or certify retention.
 sibling-metadata-probe:
     cargo run --locked --example sibling_metadata_probe
+
+# Gray/gray-alpha input expands to RGB/RGBA in the encoded WebP.
+gray-output-color-check:
+    cargo test --locked --lib gray_cicp
+    cargo test --locked --lib cicp_
+    cargo clippy --locked --lib -- -D warnings

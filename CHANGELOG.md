@@ -5,6 +5,8 @@ earlier history lives in git log and LOG.md.)
 
 ## [Unreleased]
 
+- Gray CICP sources synthesize an RGB ICC for WebP's expanded RGB/RGBA output. The shared adapter accepts GrayA8, preserving its alpha. Exact pixels and the ICC color space are checked with libwebp.
+
 ### Fixed
 - Use allocator-zeroed storage for the VP8L u32 plane; verify valid-layout allocation refusal under a subprocess memory limit.
 
