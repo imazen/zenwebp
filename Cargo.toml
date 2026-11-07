@@ -523,13 +523,13 @@ zenflate = { git = "https://github.com/imazen/zenflate", rev = "a0ea03637a2cc9a1
 zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "1816b4d082234c04c3805411b437b8396040f522" }
 zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "1816b4d082234c04c3805411b437b8396040f522" }
 zenmeta = { git = "https://github.com/imazen/zencodec", rev = "1816b4d082234c04c3805411b437b8396040f522" }
-zenpng = { git = "https://github.com/imazen/zenpng", rev = "02a7f0df5f72dd79b0afa58d66ced7cdd8395e31" }
+zenpng = { git = "https://github.com/imazen/zenpng", rev = "381abd7fc9c753f14d0bd28b4cdd6d36bb1687cf" }
 
 # Merged pixel-context bridge; keep root, fuzz and recompress on one revision.
 zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "fa836abf72afe9826e866dc25712b7c800323962" }
 zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "fa836abf72afe9826e866dc25712b7c800323962" }
-zenanalyze-api = { git = "https://github.com/imazen/zenanalyze", rev = "38dc80f73887dafae6bf5ebfe9a03be5ef78ebe0" }
-zenanalyze = { git = "https://github.com/imazen/zenanalyze", rev = "38dc80f73887dafae6bf5ebfe9a03be5ef78ebe0" }
+zenanalyze-api = { git = "https://github.com/imazen/zenanalyze", rev = "9f57f1be05e49f91d7a13f5a4bc1227b56fe76f2" }
+zenanalyze = { git = "https://github.com/imazen/zenanalyze", rev = "9f57f1be05e49f91d7a13f5a4bc1227b56fe76f2" }
 # The zencodec 0.2 family (the Pulse contract) from one core revision; root, fuzz and
 # recompress patch the same one. zencodec 0.2 is not on crates.io: swap these patches for
 # the released zencodec / zencodec-testkit before releasing.
