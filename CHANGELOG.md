@@ -5,6 +5,9 @@ earlier history lives in git log and LOG.md.)
 
 ## [Unreleased]
 
+- Run the cross-built i686 allocation subprocess control on the native host
+  when qualifying CI, retaining its refusal/abort assertions and cross builds.
+
 - Make the gray-CICP exact-pixel control compile and run on WASM, retaining
   independent libwebp comparison on native targets.
 

@@ -1062,8 +1062,12 @@ is essentially the current implementation.
   native targets. `just gray-cicp-portability-check` passes native and wasmtime.
 - i686 allocation-refusal control (2026-11-09): CI reaches the valid-layout
   allocation test but its child spawn returns ENOSYS before the allocator
-  probe executes. This is still under investigation; no assertion is skipped
-  and no allocation-failure expectation is relaxed.
+  probe executes. The same cross-image digest passes locally. CI runs this
+  exact cross-built i686 executable on the Linux host, with a 32-bit runtime,
+  while the remaining suite stays under cross. The driver verifies ELF class,
+  architecture and test presence; all four allocation/refusal modes retain
+  their assertions. `just allocation-i686-host-check` reproduces the path.
+  The original two failing CI receipts are preserved.
 
 - PR105 zencodec 0.2 Pulse (fixed 2026-10-28). A `with_pulse` job stored the pulse
   plus `StopToken::new(pulse)`, and the native `WithStop` checked it twice per poll

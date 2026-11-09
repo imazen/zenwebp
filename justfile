@@ -355,3 +355,8 @@ gray-cicp-portability-check:
 
 allocation-i686-check:
     CROSS_CONTAINER_OPTS="${CROSS_CONTAINER_OPTS:-} --memory 4g --memory-swap 4g --cpus ${CARGO_BUILD_JOBS:-2} -e TMPDIR=${TMPDIR:?set a disk-backed scratch directory} -v ${TMPDIR}:${TMPDIR}" cross test --locked --target i686-unknown-linux-gnu --lib decoder::alloc_util::tests::valid_layout_allocation_failure -- --exact --nocapture
+
+# Same cross-built 32-bit executable, with subprocesses handled by the host.
+allocation-i686-host-check:
+    CROSS_CONTAINER_OPTS="${CROSS_CONTAINER_OPTS:-} --memory 4g --memory-swap 4g --cpus ${CARGO_BUILD_JOBS:-2} -e TMPDIR=${TMPDIR:?set a disk-backed scratch directory} -v ${TMPDIR}:${TMPDIR}" cross test --locked --target i686-unknown-linux-gnu --features inventory --lib --no-run --message-format=json > "${CARGO_TARGET_DIR:-target}/i686-allocation-artifacts.json"
+    python3 scripts/run-built-i686-allocation-test.py "${CARGO_TARGET_DIR:-target}/i686-allocation-artifacts.json" "${CARGO_TARGET_DIR:-target}"
