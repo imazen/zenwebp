@@ -1055,6 +1055,16 @@ is essentially the current implementation.
 
 ## Known Bugs
 
+- WASM gray-CICP control (2026-11-09): the shared unit test referenced the
+  native-only libwebp dev dependency, preventing WASM test compilation. It
+  now checks the same exact gray/alpha bytes and RGB ICC through the Rust
+  decoder on every target, and retains the independent libwebp assertion on
+  native targets. `just gray-cicp-portability-check` passes native and wasmtime.
+- i686 allocation-refusal control (2026-11-09): CI reaches the valid-layout
+  allocation test but its child spawn returns ENOSYS before the allocator
+  probe executes. This is still under investigation; no assertion is skipped
+  and no allocation-failure expectation is relaxed.
+
 - PR105 zencodec 0.2 Pulse (fixed 2026-10-28). A `with_pulse` job stored the pulse
   plus `StopToken::new(pulse)`, and the native `WithStop` checked it twice per poll
   (run 52 on PR 105's head: lossy decode 11 polls against the legacy token's 6).

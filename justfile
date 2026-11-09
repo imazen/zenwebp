@@ -347,3 +347,11 @@ byte-stride-check:
 
 byte-stride-root-check:
     cargo check --lib --locked
+
+# Exact gray/alpha output plus native libwebp, and the same Rust pixels on WASM.
+gray-cicp-portability-check:
+    cargo test --locked --lib gray_cicp_keeps_pixels_and_rgb_icc_through_encode
+    CARGO_TARGET_WASM32_WASIP1_RUNNER=wasmtime cargo test --locked --lib --target wasm32-wasip1 --no-default-features gray_cicp_keeps_pixels_and_rgb_icc_through_encode
+
+allocation-i686-check:
+    CROSS_CONTAINER_OPTS="${CROSS_CONTAINER_OPTS:-} --memory 4g --memory-swap 4g --cpus ${CARGO_BUILD_JOBS:-2} -e TMPDIR=${TMPDIR:?set a disk-backed scratch directory} -v ${TMPDIR}:${TMPDIR}" cross test --locked --target i686-unknown-linux-gnu --lib decoder::alloc_util::tests::valid_layout_allocation_failure -- --exact --nocapture

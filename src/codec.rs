@@ -5127,10 +5127,18 @@ mod tests {
                 .icc_profile
                 .expect("expanded gray output needs its RGB profile");
             assert_eq!(&profile[16..20], b"RGB ");
-            let independent = webp::Decoder::new(output.data())
-                .decode()
-                .expect("independent libwebp decode");
-            assert_eq!(&*independent, expected.as_slice(), "alpha={alpha}");
+            // The Rust decoder runs on every target, including WASM.
+            let (decoded, width, height, _) = full_decode(output.data(), &[]);
+            assert_eq!((width, height), (2, 2));
+            assert_eq!(decoded, expected, "alpha={alpha}");
+            // The C oracle dependency is available only on native targets.
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let independent = webp::Decoder::new(output.data())
+                    .decode()
+                    .expect("independent libwebp decode");
+                assert_eq!(&*independent, expected.as_slice(), "alpha={alpha}");
+            }
         }
     }
 
