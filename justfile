@@ -339,3 +339,11 @@ gray-output-color-check:
     cargo test --locked --lib gray_cicp
     cargo test --locked --lib cicp_
     cargo clippy --locked --lib -- -D warnings
+
+# Tests the production stride bridge against sample-aligned zenpixels views.
+byte-stride-check:
+    cargo test --locked --manifest-path tools/byte-stride-check/Cargo.toml
+    cargo clippy --locked --manifest-path tools/byte-stride-check/Cargo.toml --all-targets -- -D warnings
+
+byte-stride-root-check:
+    cargo check --lib --locked

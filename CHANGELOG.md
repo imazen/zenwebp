@@ -5,6 +5,8 @@ earlier history lives in git log and LOG.md.)
 
 ## [Unreleased]
 
+- Preserve RGB/RGBA rows whose byte stride is not a whole number of pixels. The native adapter compacts those rows and retains zero-copy borrowing for whole-pixel strides.
+
 - Gray CICP sources synthesize an RGB ICC for WebP's expanded RGB/RGBA output. The shared adapter accepts GrayA8, preserving its alpha. Exact pixels and the ICC color space are checked with libwebp.
 
 ### Fixed

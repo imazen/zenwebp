@@ -1147,7 +1147,7 @@ poison animation state until reset.
 The shared encoder inherited a refusing `begin` despite implementing `push_rows`.
 Its row accumulator also appended strided padding as samples. The current repair
 adds allocation-free canvas admission, strip/protocol validation and copies only
-visible rows. PixelSlice rejects strides not divisible by pixel size before adapter entry. `just declared-rows-check` exercises these routes;
+visible rows. The native WebP byte boundary borrows whole-pixel strides and compacts other sample-aligned rows before passing a pixel-count stride. `just byte-stride-check` exercises the production helper with poisoned padding and verifies the borrowed path. `just declared-rows-check` exercises these routes;
 qualification is recorded in `docs/declared-rows.md`. This remains full-raster
 buffering with AT_FINISH output, not a low-memory streaming guarantee.
 

@@ -18,6 +18,8 @@
 //! | `Decode` | [`WebpDecoder`] |
 //! | `AnimationFrameDecoder` | [`WebpAnimationFrameDecoder`] |
 
+mod byte_stride;
+
 use alloc::borrow::Cow;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -981,24 +983,12 @@ fn pixels_to_webp_input<'a>(
     let w = pixels.width();
     let h = pixels.rows();
 
-    let stride_pixels = pixels.stride() / desc.bytes_per_pixel();
-
     if desc == PixelDescriptor::RGB8_SRGB {
-        Ok((
-            Cow::Borrowed(pixels.as_strided_bytes()),
-            PixelLayout::Rgb8,
-            w,
-            h,
-            stride_pixels,
-        ))
+        let (bytes, stride_pixels) = byte_stride::whole_pixel_rows(pixels);
+        Ok((bytes, PixelLayout::Rgb8, w, h, stride_pixels))
     } else if desc == PixelDescriptor::RGBA8_SRGB {
-        Ok((
-            Cow::Borrowed(pixels.as_strided_bytes()),
-            PixelLayout::Rgba8,
-            w,
-            h,
-            stride_pixels,
-        ))
+        let (bytes, stride_pixels) = byte_stride::whole_pixel_rows(pixels);
+        Ok((bytes, PixelLayout::Rgba8, w, h, stride_pixels))
     } else if desc == PixelDescriptor::BGRA8_SRGB {
         let raw = pixels.contiguous_bytes();
         let mut rgba = alloc::vec![0u8; raw.len()];
@@ -1020,25 +1010,15 @@ fn pixels_to_webp_input<'a>(
             .map_err(|e| EncodeError::InvalidBufferSize(alloc::format!("pixel conversion: {e}")))?;
         Ok((Cow::Owned(rgb), PixelLayout::Rgb8, w, h, w as usize))
     } else if desc == PixelDescriptor::GRAY8_SRGB {
+        let (bytes, stride_pixels) = byte_stride::whole_pixel_rows(pixels);
         // Pass through as L8 — encoder accepts grayscale natively in both
         // lossy (constant U=V=128 chroma plane) and lossless (gray→RGBA
         // happens inside encode_lossless_full) paths. Avoids the 3× alloc
         // that gray→RGB expansion required.
-        Ok((
-            Cow::Borrowed(pixels.as_strided_bytes()),
-            PixelLayout::L8,
-            w,
-            h,
-            stride_pixels,
-        ))
+        Ok((bytes, PixelLayout::L8, w, h, stride_pixels))
     } else if desc == PixelDescriptor::GRAYA8_SRGB {
-        Ok((
-            Cow::Borrowed(pixels.as_strided_bytes()),
-            PixelLayout::La8,
-            w,
-            h,
-            stride_pixels,
-        ))
+        let (bytes, stride_pixels) = byte_stride::whole_pixel_rows(pixels);
+        Ok((bytes, PixelLayout::La8, w, h, stride_pixels))
     } else if desc == PixelDescriptor::RGBF32_LINEAR {
         let raw = pixels.contiguous_bytes();
         let floats = as_f32_slice(&raw);
