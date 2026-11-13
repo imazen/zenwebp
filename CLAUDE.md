@@ -1219,5 +1219,7 @@ and alpha samples. The original channel-count negative control failed.
 Strided RGB8/RGBA8 targeting now validates row geometry and packs padded rows
 once, preserving the exact packed-input candidate, revision-7 A score and pass
 count. The regression fails on the previous silent fallback. Packed rows remain
-borrowed. Metadata (ICC/EXIF/XMP) still triggers the old unmeasured fallback and
-requires a separate repair; this stride fix does not clear metadata targeting.
+borrowed. EXIF/XMP now ride every measured probe, preserving metadata and reported size.
+ICC-tagged target requests return the existing unsupported PixelFormat error:
+the scorer currently receives sRGB byte views and has no ICC-managed source
+path. Ordinary non-target ICC encoding remains supported.

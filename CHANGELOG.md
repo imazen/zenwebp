@@ -17,6 +17,8 @@ earlier history lives in git log and LOG.md.)
 
 ### Fixed
 
+- Keep EXIF/XMP on every measured zensim target probe. Refuse ICC-tagged targets with the existing unsupported pixel-format error instead of silently disabling targeting or scoring an unknown color space as sRGB.
+
 - Preserve measured revision-7 A targeting on padded RGB/RGBA rows; reject invalid stride and short buffers before measurement.
 
 - The i686 host allocation runner preserves Cargo-reported build/out executable

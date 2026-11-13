@@ -199,3 +199,44 @@ fn padded_rows_keep_the_measured_target() {
         assert!(error.to_string().contains("stride_pixels"));
     }
 }
+
+#[test]
+fn descriptive_metadata_keeps_target_measurement_and_pixels() {
+    let (w, h) = (32, 24);
+    let pixels: Vec<u8> = (0..w * h * 3).map(|i| (i * 37 % 251) as u8).collect();
+    let config = LossyConfig::new()
+        .with_method(2)
+        .with_target_zensim(ZensimTarget::new(50.0).with_max_passes(2));
+    let (plain, pm) = EncodeRequest::lossy(&config, &pixels, PixelLayout::Rgb8, w, h)
+        .encode_with_metrics()
+        .unwrap();
+    let exif = b"Exif\0\0descriptive test payload";
+    let xmp = b"<x:xmpmeta>target-test</x:xmpmeta>";
+    let (tagged, tm) = EncodeRequest::lossy(&config, &pixels, PixelLayout::Rgb8, w, h)
+        .with_exif(exif)
+        .with_xmp(xmp)
+        .encode_with_metrics()
+        .unwrap();
+    assert!(
+        tm.achieved_score.is_finite(),
+        "metadata silently disabled targeting"
+    );
+    assert_eq!(tm.achieved_score.to_bits(), pm.achieved_score.to_bits());
+    assert_eq!(tm.passes_used, pm.passes_used);
+    assert_eq!(tm.targets_met, pm.targets_met);
+    assert_eq!(tm.bytes, tagged.len());
+    let plain = zenwebp::mux::WebPDemuxer::new(&plain).unwrap();
+    let tagged = zenwebp::mux::WebPDemuxer::new(&tagged).unwrap();
+    assert_eq!(tagged.exif(), Some(exif.as_slice()));
+    assert_eq!(tagged.xmp(), Some(xmp.as_slice()));
+    assert_eq!(
+        tagged.frame(1).unwrap().bitstream,
+        plain.frame(1).unwrap().bitstream
+    );
+    // Do not pretend that ICC-coded samples have sRGB metric semantics.
+    let error = EncodeRequest::lossy(&config, &pixels, PixelLayout::Rgb8, w, h)
+        .with_icc_profile(b"unknown source profile")
+        .encode_with_metrics()
+        .unwrap_err();
+    assert!(error.to_string().contains("pixel_format"));
+}

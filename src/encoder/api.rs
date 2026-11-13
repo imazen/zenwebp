@@ -1326,11 +1326,9 @@ impl<'a> EncodeRequest<'a> {
     /// silent fallback to single-pass — that would hide the unhonored
     /// target.
     ///
-    /// Padded rows are packed before measurement. The metadata fields (icc/exif/xmp) are not
-    /// currently honored on the iteration path — if any are set we
-    /// fall back to a single-pass encode and return `None` so the
-    /// caller can take the normal path. (TODO: thread metadata
-    /// through iteration once a user needs it.)
+    /// Padded rows are packed before measurement. EXIF/XMP are preserved on
+    /// every probe. ICC-tagged targeting returns an unsupported pixel-format
+    /// error until the scorer has a color-managed source path.
     fn try_encode_target_zensim_with_metrics(
         &self,
     ) -> EncodeResult<
@@ -1340,8 +1338,8 @@ impl<'a> EncodeRequest<'a> {
             super::zensim_target::ZensimEncodeMetrics,
         )>,
     > {
-        // Only Rgb8/Rgba8 lossy configs with target_zensim set and no
-        // metadata trigger the iteration path. Other layouts
+        // Only Rgb8/Rgba8 lossy configs with target_zensim set
+        // trigger the iteration path. Other layouts
         // with target_zensim set return a typed error (no silent
         // fallback to single-pass — that would hide the unhonored
         // target). Everything else returns Ok(None) so the caller
@@ -1394,12 +1392,20 @@ impl<'a> EncodeRequest<'a> {
             )?;
             &packed
         };
-        if self.icc_profile.is_some() || self.exif_metadata.is_some() || self.xmp_metadata.is_some()
-        {
-            // Iteration loop currently doesn't thread metadata
-            // through. Take the safe path.
-            return Ok(None);
+        // The scorer currently receives sRGB byte sources. Refuse an ICC-tagged
+        // request rather than score an unknown color space as sRGB or silently
+        // disable its target. EXIF and XMP do not change the sample color space.
+        #[cfg(feature = "target-zensim")]
+        if self.icc_profile.is_some() {
+            return Err(at!(EncodeError::UnsupportedOperation(
+                zencodec::UnsupportedOperation::PixelFormat,
+            )));
         }
+        let metadata = ImageMetadata {
+            icc_profile: self.icc_profile,
+            exif: self.exif_metadata,
+            xmp: self.xmp_metadata,
+        };
         let triple = crate::pulse::encode_with_pulse(
             self.pulse,
             self.stop,
@@ -1412,6 +1418,7 @@ impl<'a> EncodeRequest<'a> {
                     self.height,
                     stop,
                     progress,
+                    metadata,
                 )
             },
         )?;

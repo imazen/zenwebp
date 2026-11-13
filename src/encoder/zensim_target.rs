@@ -719,6 +719,7 @@ pub(crate) mod iteration {
         height: u32,
         stop: &dyn enough::Stop,
         progress: &dyn crate::encoder::api::EncodeProgress,
+        metadata: crate::encoder::api::ImageMetadata<'_>,
     ) -> IterationResult {
         // Layout gate: Rgb8 / Rgba8 only. The public API gate
         // (`EncodeRequest::try_encode_target_zensim_with_metrics`) already
@@ -837,7 +838,7 @@ pub(crate) mod iteration {
         // per real k-means segment instead of a 2x2 spatial proxy.
         let encode_start = std::time::Instant::now();
         let (bytes0, stats0, diag0) = encode_at_with_diagnostics(
-            cfg, q, false, None, pixels, layout, width, height, stop, progress,
+            cfg, q, false, None, pixels, layout, width, height, stop, progress, metadata,
         )?;
         let encode_seconds = encode_start.elapsed().as_secs_f64();
         let max_passes = target.max_passes.max(1);
@@ -1054,6 +1055,7 @@ pub(crate) mod iteration {
                 height,
                 stop,
                 progress,
+                metadata,
             )?;
             let encode_seconds = encode_start.elapsed().as_secs_f64();
             let (score_n, dm_n) = measure(
@@ -1297,6 +1299,7 @@ pub(crate) mod iteration {
         height: u32,
         stop: &dyn enough::Stop,
         progress: &dyn crate::encoder::api::EncodeProgress,
+        metadata: crate::encoder::api::ImageMetadata<'_>,
     ) -> Result<(Vec<u8>, crate::encoder::api::EncodeStats, EncodeDiagnostics), At<EncodeError>>
     {
         let mut probe_cfg = cfg.clone();
@@ -1315,7 +1318,8 @@ pub(crate) mod iteration {
         let req =
             crate::encoder::api::EncodeRequest::lossy(&probe_cfg, pixels, layout, width, height)
                 .with_stop(stop)
-                .with_progress(progress);
+                .with_progress(progress)
+                .with_metadata(metadata);
         match req.encode_inner_with_diagnostics() {
             Ok((bytes, stats, diag)) => Ok((bytes, stats, diag)),
             // Preserve the encoder's whereat trace.

@@ -687,6 +687,7 @@ impl LossyConfig {
     /// reach the same machinery via
     /// [`EncodeRequest::encode_with_metrics`](super::api::EncodeRequest::encode_with_metrics)
     /// or [`EncodeRequest::encode`](super::api::EncodeRequest::encode).
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn encode_pixels_with_metrics(
         &self,
         pixels: &[u8],
@@ -695,6 +696,7 @@ impl LossyConfig {
         height: u32,
         stop: &dyn enough::Stop,
         progress: &dyn super::api::EncodeProgress,
+        metadata: super::api::ImageMetadata<'_>,
     ) -> Result<
         (
             alloc::vec::Vec<u8>,
@@ -703,7 +705,9 @@ impl LossyConfig {
         ),
         At<super::api::EncodeError>,
     > {
-        encode_pixels_with_metrics_impl(self, pixels, layout, width, height, stop, progress)
+        encode_pixels_with_metrics_impl(
+            self, pixels, layout, width, height, stop, progress, metadata,
+        )
     }
 }
 
@@ -1293,6 +1297,7 @@ impl EncoderConfig {
 // ============================================================================
 
 #[cfg(feature = "target-zensim")]
+#[allow(clippy::too_many_arguments)]
 fn encode_pixels_with_metrics_impl(
     cfg: &LossyConfig,
     pixels: &[u8],
@@ -1301,6 +1306,7 @@ fn encode_pixels_with_metrics_impl(
     height: u32,
     stop: &dyn enough::Stop,
     progress: &dyn super::api::EncodeProgress,
+    metadata: super::api::ImageMetadata<'_>,
 ) -> Result<
     (
         alloc::vec::Vec<u8>,
@@ -1311,14 +1317,15 @@ fn encode_pixels_with_metrics_impl(
 > {
     if let Some(t) = cfg.target_zensim {
         return super::zensim_target::iteration::run(
-            cfg, t, pixels, layout, width, height, stop, progress,
+            cfg, t, pixels, layout, width, height, stop, progress, metadata,
         );
     }
     // No target_zensim → straight single-pass encode.
-    encode_single_pass(cfg, pixels, layout, width, height, stop, progress)
+    encode_single_pass(cfg, pixels, layout, width, height, stop, progress, metadata)
 }
 
 #[cfg(not(feature = "target-zensim"))]
+#[allow(clippy::too_many_arguments)]
 fn encode_pixels_with_metrics_impl(
     cfg: &LossyConfig,
     pixels: &[u8],
@@ -1327,6 +1334,7 @@ fn encode_pixels_with_metrics_impl(
     height: u32,
     stop: &dyn enough::Stop,
     progress: &dyn super::api::EncodeProgress,
+    metadata: super::api::ImageMetadata<'_>,
 ) -> Result<
     (
         alloc::vec::Vec<u8>,
@@ -1346,13 +1354,16 @@ fn encode_pixels_with_metrics_impl(
             super::analysis::ImageContentType::Photo,
         )
         .clamp(0.0, 100.0);
-        return encode_single_pass(&probe, pixels, layout, width, height, stop, progress);
+        return encode_single_pass(
+            &probe, pixels, layout, width, height, stop, progress, metadata,
+        );
     }
-    encode_single_pass(cfg, pixels, layout, width, height, stop, progress)
+    encode_single_pass(cfg, pixels, layout, width, height, stop, progress, metadata)
 }
 
 /// Single-pass encode (Rgb8 or Rgba8), no metrics. Plumb through
 /// `EncodeRequest` to reuse the existing entry point.
+#[allow(clippy::too_many_arguments)]
 fn encode_single_pass(
     cfg: &LossyConfig,
     pixels: &[u8],
@@ -1361,6 +1372,7 @@ fn encode_single_pass(
     height: u32,
     stop: &dyn enough::Stop,
     progress: &dyn super::api::EncodeProgress,
+    metadata: super::api::ImageMetadata<'_>,
 ) -> Result<
     (
         alloc::vec::Vec<u8>,
@@ -1374,7 +1386,8 @@ fn encode_single_pass(
     // every other request (#78).
     let req = super::api::EncodeRequest::lossy(cfg, pixels, layout, width, height)
         .with_stop(stop)
-        .with_progress(progress);
+        .with_progress(progress)
+        .with_metadata(metadata);
     match req.encode_inner() {
         Ok((bytes, stats)) => {
             let len = bytes.len();
