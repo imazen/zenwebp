@@ -1060,6 +1060,12 @@ is essentially the current implementation.
 
 ## Known Bugs
 
+- Fixed 2026-11-13: Rust 1.100 CI reports the cross-built allocation binary
+  under debug/build/.../out; the host runner guessed debug/deps and failed
+  before executing it. Preserve the reported target-relative suffix. The full
+  runner regression fails on the old path mapping and covers both layouts and
+  wrong-ELF refusal (`just allocation-runner-check`).
+
 - Fixed 2026-11-13: production target-zensim used registry 0.2.7 while the
   requested codec metric is adopted revision-7 A. The independent model-identity
   regression failed before migration (61.284134 reported vs A 44.012302).

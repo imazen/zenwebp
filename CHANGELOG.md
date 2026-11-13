@@ -16,6 +16,9 @@ earlier history lives in git log and LOG.md.)
 - Gray CICP sources synthesize an RGB ICC for WebP's expanded RGB/RGBA output. The shared adapter accepts GrayA8, preserving its alpha. Exact pixels and the ICC color space are checked with libwebp.
 
 ### Fixed
+
+- The i686 host allocation runner preserves Cargo-reported build/out executable
+  paths as well as legacy deps paths; ELF and test-presence gates remain intact.
 - Use allocator-zeroed storage for the VP8L u32 plane; verify valid-layout allocation refusal under a subprocess memory limit.
 
 - Restore shared declared row encoding and preserve strided samples; validate canvas/strip protocol and retain AT_FINISH buffering. See `docs/declared-rows.md`.

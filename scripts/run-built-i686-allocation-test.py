@@ -23,7 +23,16 @@ for line in receipt.read_text().splitlines():
         artifacts.append(item["executable"])
 if len(artifacts) != 1:
     raise RuntimeError(f"expected one zenwebp test executable, found {artifacts!r}")
-binary = target_dir / "i686-unknown-linux-gnu" / "debug" / "deps" / Path(artifacts[0]).name
+reported = Path(artifacts[0])
+triplet = "i686-unknown-linux-gnu"
+if reported.parts.count(triplet) != 1:
+    raise RuntimeError(f"artifact has no unique i686 target path: {reported}")
+relative = reported.parts[reported.parts.index(triplet):]
+if ".." in relative:
+    raise RuntimeError(f"artifact escapes the target directory: {reported}")
+# Cargo can place tests under debug/build/<package>/<hash>/out rather than
+# debug/deps. Preserve the exact reported suffix when mapping /target to host.
+binary = target_dir.joinpath(*relative)
 with binary.open("rb") as stream:
     header = stream.read(20)
 if header[:6] != b"\x7fELF\x01\x01" or int.from_bytes(header[18:20], "little") != 3:
