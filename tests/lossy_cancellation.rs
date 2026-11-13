@@ -106,6 +106,47 @@ fn animated_lossy_frame_honors_pre_stopped_token() {
     );
 }
 
+/// Stays live for `remaining` polls, then cancels. Unlike `AlwaysStopped`
+/// the first checks pass, so a decode that fails must have polled *inside*
+/// the decode loop rather than only at an entry gate.
+struct FailAfter(std::sync::atomic::AtomicUsize);
+
+impl enough::Stop for FailAfter {
+    fn check(&self) -> Result<(), enough::StopReason> {
+        if self
+            .0
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed)
+            == 0
+        {
+            Err(enough::StopReason::Cancelled)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// The VP8 MB-row loop polls the token once per row: a stop that only fires
+/// after the entry gate must still abort the decode with `Cancelled`.
+#[test]
+fn lossy_decode_polls_stop_inside_mb_row_loop() {
+    let (w, h) = (256u32, 256u32);
+    let rgb: Vec<u8> = (0..w * h * 3).map(|i| (i * 7) as u8).collect();
+    let cfg = zenwebp::LossyConfig::new();
+    let data = zenwebp::EncodeRequest::lossy(&cfg, &rgb, zenwebp::PixelLayout::Rgb8, w, h)
+        .encode()
+        .unwrap();
+    let cfg = zenwebp::DecodeConfig::default();
+    let stop = FailAfter(2.into());
+    let err = zenwebp::DecodeRequest::new(&cfg, &data)
+        .stop(&stop)
+        .decode_rgba()
+        .expect_err("mid-decode stop must cancel the lossy decode");
+    assert!(
+        matches!(err.error(), zenwebp::DecodeError::Cancelled(_)),
+        "expected Cancelled, got {err:?}"
+    );
+}
+
 #[test]
 fn zencodec_lossy_decode_honors_pre_stopped_token() {
     use zencodec::CodecErrorExt as _;

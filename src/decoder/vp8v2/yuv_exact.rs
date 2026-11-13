@@ -1754,7 +1754,9 @@ mod tests {
 
             // Full-frame: decode_to_frame + yuv420_to_rgb_exact
             let mut ctx1 = super::super::DecoderContext::new();
-            let frame = ctx1.decode_to_frame(vp8_data).expect("frame decode failed");
+            let frame = ctx1
+                .decode_to_frame(vp8_data, None)
+                .expect("frame decode failed");
             let fw = usize::from(frame.width);
             let fh = usize::from(frame.height);
             let mbwidth = (fw + 15) / 16;
@@ -1777,7 +1779,7 @@ mod tests {
             let mut ctx2 = super::super::DecoderContext::new();
             let mut streaming_rgb = alloc::vec::Vec::new();
             let (sw, sh) = ctx2
-                .decode_to_rgb(vp8_data, &mut streaming_rgb, 3)
+                .decode_to_rgb(vp8_data, &mut streaming_rgb, 3, None)
                 .expect("streaming decode failed");
 
             assert_eq!(fw, usize::from(sw));

@@ -64,15 +64,25 @@ impl DecoderContext {
     ///
     /// The `data` must be the raw VP8 bitstream (inside the RIFF/WebP
     /// container, after the VP8 chunk header has been stripped).
-    pub fn decode_to_frame(&mut self, data: &[u8]) -> Result<Frame, whereat::At<DecodeError>> {
+    ///
+    /// `stop` is polled once per macroblock row; a fired token aborts the
+    /// decode with [`DecodeError::Cancelled`].
+    pub fn decode_to_frame(
+        &mut self,
+        data: &[u8],
+        stop: Option<&dyn enough::Stop>,
+    ) -> Result<Frame, whereat::At<DecodeError>> {
         self.read_frame_header(data)?;
-        self.decode_to_frame_internal()
+        self.decode_to_frame_internal(stop)
             .map_err(|e| at!(DecodeError::from(e)))
     }
 
     /// Internal: decode MB rows to full-frame Y/U/V and build a Frame.
-    fn decode_to_frame_internal(&mut self) -> Result<Frame, InternalDecodeError> {
-        self.decode_mb_rows()?;
+    fn decode_to_frame_internal(
+        &mut self,
+        stop: Option<&dyn enough::Stop>,
+    ) -> Result<Frame, InternalDecodeError> {
+        self.decode_mb_rows(stop)?;
 
         let tables = &self.tables;
 
@@ -114,6 +124,7 @@ impl DecoderContext {
         data: &[u8],
         output: &mut Vec<u8>,
         bpp: usize,
+        stop: Option<&dyn enough::Stop>,
     ) -> Result<(u16, u16), whereat::At<DecodeError>> {
         if bpp != 3 && bpp != 4 {
             return Err(at!(DecodeError::InvalidParameter(alloc::format!(
@@ -142,14 +153,14 @@ impl DecoderContext {
             // Streaming path: convert cache rows directly to RGB.
             // Requires extra_y_rows >= 2 so the cache has enough UV rows
             // for the fancy upsampler at MB row boundaries.
-            self.decode_mb_rows_to_rgb(output, bpp)
+            self.decode_mb_rows_to_rgb(output, bpp, stop)
                 .map_err(|e| at!(DecodeError::from(e)))?;
         } else {
             // Full-frame YUV buffers: the no-filter case (extra_y_rows=0,
             // rare: very high quality / filter disabled) and point-sampled
             // (no-fancy) output, which needs no cross-row chroma context.
             let frame = self
-                .decode_to_frame_internal()
+                .decode_to_frame_internal(stop)
                 .map_err(|e| at!(DecodeError::from(e)))?;
             let fw = usize::from(frame.width);
             let fh = usize::from(frame.height);
@@ -179,7 +190,10 @@ impl DecoderContext {
 
     /// Main decode loop for full-frame Y/U/V output. For each row: parse +
     /// predict/IDCT each MB individually, filter the row, copy to ybuf/ubuf/vbuf.
-    fn decode_mb_rows(&mut self) -> Result<(), InternalDecodeError> {
+    fn decode_mb_rows(
+        &mut self,
+        stop: Option<&dyn enough::Stop>,
+    ) -> Result<(), InternalDecodeError> {
         let mbwidth = usize::from(self.tables.mbwidth);
         let mbheight = usize::from(self.tables.mbheight);
 
@@ -214,6 +228,11 @@ impl DecoderContext {
             .map_err(|_| InternalDecodeError::MemoryLimitExceeded)?;
 
         for mby in 0..mbheight {
+            // Cooperative cancellation at MB-row granularity (matches the
+            // VP8L decoder's per-block poll cadence).
+            if let Some(stop) = stop {
+                stop.check()?;
+            }
             self.process_mb_row(mby)?;
 
             // Output cache to Y/U/V frame buffers
@@ -235,6 +254,7 @@ impl DecoderContext {
         &mut self,
         output: &mut [u8],
         bpp: usize,
+        stop: Option<&dyn enough::Stop>,
     ) -> Result<(), InternalDecodeError> {
         let mbheight = usize::from(self.tables.mbheight);
         let width = usize::from(self.tables.width);
@@ -247,6 +267,9 @@ impl DecoderContext {
         self.prev_last_v_row.resize(chroma_width, 128);
 
         for mby in 0..mbheight {
+            if let Some(stop) = stop {
+                stop.check()?;
+            }
             self.process_mb_row(mby)?;
 
             // Convert cache rows directly to RGB output

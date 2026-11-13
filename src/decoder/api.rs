@@ -631,7 +631,7 @@ impl<'a> DecodeRequest<'a> {
     /// pixel / memory caps and the allocation policy); this used to discard
     /// the request config entirely (#78-B).
     pub fn decode_yuv420(self) -> DecodeResult<YuvPlanes> {
-        decode_yuv420_with_config(self.data, self.config)
+        decode_yuv420_with_config(self.data, self.config, self.stop)
     }
 
     /// Decode lossy VP8 to RGB.
@@ -647,9 +647,9 @@ impl<'a> DecodeRequest<'a> {
     }
 
     fn decode_lossy_internal(self, bpp: usize) -> DecodeResult<(Vec<u8>, u16, u16)> {
-        // Honor cancellation before doing any work — the one-shot lossy path
-        // has no mid-decode checkpoints (the VP8v2 context does not carry a
-        // stop token), so the entry check is the cancellation contract here.
+        // Honor cancellation before doing any work; the VP8v2 context now
+        // polls the token once per MB row, so a live stop aborts mid-decode
+        // too — the entry check keeps a pre-stopped token from doing work.
         if let Some(stop) = self.stop {
             stop.check()
                 .map_err(|r| whereat::at!(DecodeError::Cancelled(r)))?;
@@ -687,7 +687,7 @@ impl<'a> DecodeRequest<'a> {
                 ctx.set_upsampling(self.config.upsampling);
                 ctx.set_alloc_pref(self.config.limits.alloc_pref);
                 let mut output = Vec::new();
-                let (w, h) = ctx.decode_to_rgb(vp8_data, &mut output, bpp)?;
+                let (w, h) = ctx.decode_to_rgb(vp8_data, &mut output, bpp, self.stop)?;
                 Ok((output, w, h))
             }
             b"VP8X" => {
@@ -722,7 +722,8 @@ impl<'a> DecodeRequest<'a> {
 
                 // Decode lossy bitstream, requesting RGBA if alpha is present
                 let decode_bpp = if frame.has_alpha { 4 } else { bpp };
-                let (w, h) = ctx.decode_to_rgb(frame.bitstream, &mut output, decode_bpp)?;
+                let (w, h) =
+                    ctx.decode_to_rgb(frame.bitstream, &mut output, decode_bpp, self.stop)?;
 
                 // Apply alpha channel if present
                 if let Some(alpha_data) = frame.alpha_data {
@@ -1065,6 +1066,11 @@ impl<'a> WebPDecoder<'a> {
                 let mut prev_anmf: Option<bool> = None;
 
                 while position.saturating_add(8) <= self.riff_end {
+                    // A stream of tiny chunks keeps this walk running —
+                    // poll the token each chunk so the scan stays killable.
+                    if let Some(stop) = self.stop {
+                        stop.check().map_err(|r| at!(DecodeError::Cancelled(r)))?;
+                    }
                     match read_chunk_header(&mut self.r) {
                         Ok((chunk, chunk_size, chunk_size_rounded)) => {
                             let range = position + 8..position + 8 + chunk_size;
@@ -1406,9 +1412,9 @@ impl<'a> WebPDecoder<'a> {
                 .get(range.start as usize..range.end as usize)
                 .ok_or(at!(DecodeError::InvalidChunkSize))?;
 
-            // The lossy VP8 context carries no stop token, so this entry check
-            // is the cancellation contract for a still lossy decode (the VP8L
-            // branch above hands the token to the lossless decoder).
+            // The lossy VP8 context polls the token per MB row during decode;
+            // this entry check keeps a pre-stopped token from doing work at
+            // all (the VP8L branch hands the token to the lossless decoder).
             if let Some(stop) = self.stop {
                 stop.check().map_err(|r| at!(DecodeError::Cancelled(r)))?;
             }
@@ -1429,7 +1435,7 @@ impl<'a> WebPDecoder<'a> {
             let (w, h) = self
                 .animation
                 .ctx
-                .decode_to_rgb(vp8_data, &mut output, bpp)?;
+                .decode_to_rgb(vp8_data, &mut output, bpp, self.stop)?;
             if u32::from(w) != self.width || u32::from(h) != self.height {
                 return Err(at!(DecodeError::InconsistentImageSizes));
             }
@@ -1566,6 +1572,7 @@ impl<'a> WebPDecoder<'a> {
                     data_slice,
                     &mut self.animation.frame_scratch,
                     3,
+                    self.stop,
                 )?;
                 if u32::from(w) != frame_width || u32::from(h) != frame_height {
                     return Err(at!(DecodeError::InconsistentImageSizes));
@@ -1632,6 +1639,7 @@ impl<'a> WebPDecoder<'a> {
                     vp8_slice,
                     &mut self.animation.frame_scratch,
                     4,
+                    self.stop,
                 )?;
 
                 // The alpha plane was sized from the ANMF frame dimensions, but the
@@ -2242,14 +2250,18 @@ pub fn decode_bgr_into(
 /// [`YuvPlanes`] containing separate Y, U, and V buffers.
 #[track_caller]
 pub fn decode_yuv420(data: &[u8]) -> DecodeResult<YuvPlanes> {
-    decode_yuv420_with_config(data, &DecodeConfig::default())
+    decode_yuv420_with_config(data, &DecodeConfig::default(), None)
 }
 
 /// [`decode_yuv420`] under a caller-supplied [`DecodeConfig`]: the config's
 /// limits gate the header (dimensions / pixels / frames) and decide whether
 /// the plane buffers are allocated fallibly.
 #[track_caller]
-fn decode_yuv420_with_config(data: &[u8], config: &DecodeConfig) -> DecodeResult<YuvPlanes> {
+fn decode_yuv420_with_config(
+    data: &[u8],
+    config: &DecodeConfig,
+    stop: Option<&dyn enough::Stop>,
+) -> DecodeResult<YuvPlanes> {
     let decoder =
         WebPDecoder::new_with_options_and_limits(data, config.to_options(), config.limits.clone())?;
     let alloc_pref = config.limits.alloc_pref;
@@ -2259,7 +2271,7 @@ fn decode_yuv420_with_config(data: &[u8], config: &DecodeConfig) -> DecodeResult
         if let Some(range) = decoder.chunks.get(&WebPRiffChunk::VP8) {
             let data_slice = decoder.chunk_slice(range)?;
             let mut ctx = super::vp8v2::DecoderContext::new();
-            let frame = ctx.decode_to_frame(data_slice)?;
+            let frame = ctx.decode_to_frame(data_slice, stop)?;
 
             let w = u32::from(frame.width);
             let h = u32::from(frame.height);
