@@ -21,7 +21,15 @@
 //!    one-pair secant fitted to the most recent two (q, achieved) probes.
 //!    Falls back to a fixed step on the first iteration.
 //!
-//! # Calibration recipe
+//! # Model identity
+//!
+//! Production scores use the adopted revision-7 `A` through the pinned
+//! `zensim-a` dependency, with score-only measurement. Spatial research is
+//! explicit opt-in and retains its separately pinned scorer. Historical bucket
+//! anchors are initial quality guesses, not a calibration of revision-7 A;
+//! every delivered score is measured on the actual encoded reconstruction.
+//!
+//! # Historical calibration recipe
 //!
 //! The per-bucket anchors below come from `dev/zensim_calibrate.rs`. To
 //! re-fit (e.g. after touching the encoder's RD path or upgrading zensim):
@@ -80,7 +88,7 @@ use super::analysis::ImageContentType;
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ZensimTarget {
-    /// Ideal zensim score. The encoder iterates to reach or exceed this
+    /// Ideal adopted revision-7 zensim A score. The encoder iterates to reach or exceed this
     /// within the [`Self::max_passes`] budget.
     pub target: f32,
 
@@ -522,6 +530,9 @@ pub(crate) mod iteration {
     use whereat::{At, ResultAtExt, at};
 
     pub(super) enum SpatialMap {
+        ScoreOnly,
+        // Retained for the spatial aggregator regression controls.
+        #[allow(dead_code)]
         Pixels(Vec<f32>),
         #[cfg(feature = "__zensim-research")]
         Macroblocks(Vec<f32>),
@@ -734,8 +745,8 @@ pub(crate) mod iteration {
             .as_ref()
             .map(|c| super::candidate::Measurement::new(c, pixels, width, height))
             .transpose()?;
-        let legacy = if research_seed.is_none() {
-            let z = zensim::Zensim::new(zensim::ZensimProfile::latest());
+        let production = if research_seed.is_none() {
+            let z = zensim_a::Zensim::new(zensim_a::ZensimProfile::A);
             let pre =
                 build_source_reference(&z, pixels, layout, width, height).ok_or_else(|| {
                     at!(EncodeError::InvalidBufferSize(
@@ -759,9 +770,9 @@ pub(crate) mod iteration {
                 return measurement.measure(bytes, q, stats, diag, overrides, encode_seconds);
             }
             let _ = (q, stats, diag, overrides, encode_seconds);
-            let (z, pre) = legacy.as_ref().expect("legacy scorer without candidate");
-            let (score, map) = measure_score_and_diffmap(z, pre, bytes, layout, width, height)?;
-            Ok((score, SpatialMap::Pixels(map)))
+            let (z, pre) = production.as_ref().expect("A scorer without candidate");
+            let score = measure_score(z, pre, bytes, layout, width, height)?;
+            Ok((score, SpatialMap::ScoreOnly))
         };
         // 1. Detect bucket from a quick classifier pass on the source.
         // Skipped entirely when the naive-starting-q ablation is on.
@@ -843,8 +854,8 @@ pub(crate) mod iteration {
             );
         }
 
-        // 4. Measure pass 0 with per-pixel diffmap (used by Phase 3 if
-        // segments are active). The reference and the decoded probe
+        // 4. Measure pass 0. Production uses a scalar score; only explicitly
+        // selected spatial research supplies a map. The source and decoded probe
         // both go through the same layout-aware path so the pair is
         // measured consistently (RGB→RGB, RGBA→RGBA with deterministic
         // noise compositing).
@@ -885,7 +896,8 @@ pub(crate) mod iteration {
         // Chunk A ablation: when [`AblationToggles::disable_phase3`] is
         // set, force the global-q fallback path even when segments are
         // active.
-        let per_segment_enabled = research_mode != Some("scalar")
+        let per_segment_enabled = !matches!(dm0, SpatialMap::ScoreOnly)
+            && research_mode != Some("scalar")
             && !ablate_disable_phase3()
             && diag0.num_segments > 1
             && !diag0.segment_map.is_empty()
@@ -1312,17 +1324,17 @@ pub(crate) mod iteration {
     }
 
     /// Build a precomputed zensim reference from interleaved RGB or
-    /// RGBA bytes. RGBA goes through `zensim::RgbaSlice` which composites
+    /// RGBA bytes. RGBA goes through `zensim_a::RgbaSlice` which composites
     /// over a deterministic noise background internally — the same
     /// composite is applied to source and to the decoded probe so the
     /// pair is comparable.
     fn build_source_reference(
-        z: &zensim::Zensim,
+        z: &zensim_a::Zensim,
         pixels: &[u8],
         layout: PixelLayout,
         width: u32,
         height: u32,
-    ) -> Option<zensim::PrecomputedReference> {
+    ) -> Option<zensim_a::PrecomputedReference> {
         let w = width as usize;
         let h = height as usize;
         match layout {
@@ -1331,7 +1343,7 @@ pub(crate) mod iteration {
                     return None;
                 }
                 let chunks: &[[u8; 3]] = bytemuck::cast_slice(&pixels[..w * h * 3]);
-                let slice = zensim::RgbSlice::new(chunks, w, h);
+                let slice = zensim_a::RgbSlice::new(chunks, w, h);
                 z.precompute_reference(&slice).ok()
             }
             PixelLayout::Rgba8 => {
@@ -1339,7 +1351,7 @@ pub(crate) mod iteration {
                     return None;
                 }
                 let chunks: &[[u8; 4]] = bytemuck::cast_slice(&pixels[..w * h * 4]);
-                let slice = zensim::RgbaSlice::new(chunks, w, h);
+                let slice = zensim_a::RgbaSlice::new(chunks, w, h);
                 z.precompute_reference(&slice).ok()
             }
             // Unreachable: the gate in iteration::run rejects everything else.
@@ -1347,20 +1359,17 @@ pub(crate) mod iteration {
         }
     }
 
-    /// Decode `webp` and compute zensim score + per-pixel diffmap.
-    /// The decode is layout-aware (RGB→`decode_rgb`, RGBA→`decode_rgba`)
-    /// so the distorted side is fed into zensim with the same
-    /// composite-vs-RGB shape as the precomputed reference. The
-    /// diffmap is `Vec<f32>` of length `width * height` in row-major
-    /// order — used by Phase 3 per-segment aggregation.
-    fn measure_score_and_diffmap(
-        z: &zensim::Zensim,
-        pre: &zensim::PrecomputedReference,
+    /// Decode and score with the adopted revision-7 A model, without maps.
+    /// RGB and RGBA retain the source's matching layout/compositing semantics.
+    /// Spatial steering remains an explicit research opt-in, on its own model.
+    fn measure_score(
+        z: &zensim_a::Zensim,
+        pre: &zensim_a::PrecomputedReference,
         webp: &[u8],
         layout: PixelLayout,
         width: u32,
         height: u32,
-    ) -> Result<(f32, Vec<f32>), At<EncodeError>> {
+    ) -> Result<f32, At<EncodeError>> {
         match layout {
             PixelLayout::Rgb8 => measure_rgb(z, pre, webp, width, height),
             PixelLayout::Rgba8 => measure_rgba(z, pre, webp, width, height),
@@ -1369,12 +1378,12 @@ pub(crate) mod iteration {
     }
 
     fn measure_rgb(
-        z: &zensim::Zensim,
-        pre: &zensim::PrecomputedReference,
+        z: &zensim_a::Zensim,
+        pre: &zensim_a::PrecomputedReference,
         webp: &[u8],
         width: u32,
         height: u32,
-    ) -> Result<(f32, Vec<f32>), At<EncodeError>> {
+    ) -> Result<f32, At<EncodeError>> {
         // Preserve the decode trace across the DecodeError → EncodeError boundary.
         let (rgb, w, h) = crate::oneshot::decode_rgb(webp).map_err_at(|inner| {
             EncodeError::InvalidBufferSize(format!(
@@ -1394,25 +1403,23 @@ pub(crate) mod iteration {
             )));
         }
         let chunks: &[[u8; 3]] = bytemuck::cast_slice(&rgb[..n]);
-        let slice = zensim::RgbSlice::new(chunks, w as usize, h as usize);
-        let dm = z
-            .compute_with_ref_and_diffmap(pre, &slice, zensim::DiffmapWeighting::Trained)
-            .map_err(|e| {
-                at!(EncodeError::InvalidBufferSize(format!(
-                    "zensim compute_with_ref_and_diffmap failed: {e:?}",
-                )))
-            })?;
+        let slice = zensim_a::RgbSlice::new(chunks, w as usize, h as usize);
+        let dm = z.compute_with_ref(pre, &slice).map_err(|e| {
+            at!(EncodeError::InvalidBufferSize(format!(
+                "zensim A compute_with_ref failed: {e:?}",
+            )))
+        })?;
         let score = dm.score() as f32;
-        Ok((score, dm.diffmap().to_vec()))
+        Ok(score)
     }
 
     fn measure_rgba(
-        z: &zensim::Zensim,
-        pre: &zensim::PrecomputedReference,
+        z: &zensim_a::Zensim,
+        pre: &zensim_a::PrecomputedReference,
         webp: &[u8],
         width: u32,
         height: u32,
-    ) -> Result<(f32, Vec<f32>), At<EncodeError>> {
+    ) -> Result<f32, At<EncodeError>> {
         // Preserve the decode trace across the DecodeError → EncodeError boundary.
         let (rgba, w, h) = crate::oneshot::decode_rgba(webp).map_err_at(|inner| {
             EncodeError::InvalidBufferSize(format!(
@@ -1432,16 +1439,14 @@ pub(crate) mod iteration {
             )));
         }
         let chunks: &[[u8; 4]] = bytemuck::cast_slice(&rgba[..n]);
-        let slice = zensim::RgbaSlice::new(chunks, w as usize, h as usize);
-        let dm = z
-            .compute_with_ref_and_diffmap(pre, &slice, zensim::DiffmapWeighting::Trained)
-            .map_err(|e| {
-                at!(EncodeError::InvalidBufferSize(format!(
-                    "zensim compute_with_ref_and_diffmap failed: {e:?}",
-                )))
-            })?;
+        let slice = zensim_a::RgbaSlice::new(chunks, w as usize, h as usize);
+        let dm = z.compute_with_ref(pre, &slice).map_err(|e| {
+            at!(EncodeError::InvalidBufferSize(format!(
+                "zensim A compute_with_ref failed: {e:?}",
+            )))
+        })?;
         let score = dm.score() as f32;
-        Ok((score, dm.diffmap().to_vec()))
+        Ok(score)
     }
 
     /// Aggregate the per-pixel diffmap into per-macroblock means, then
@@ -1569,6 +1574,7 @@ pub(crate) mod iteration {
                     continue;
                 }
                 let (block_sum, block_count) = match diffmap {
+                    SpatialMap::ScoreOnly => (0.0, 0),
                     SpatialMap::Pixels(values) => {
                         let mut sum = 0.0f64;
                         let mut count = 0u64;

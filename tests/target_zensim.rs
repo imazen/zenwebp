@@ -244,13 +244,25 @@ fn color_blocks_256() -> (Vec<u8>, u32, u32) {
     (buf, w, h)
 }
 
+// These two regression floors were established with zensim 0.2.7. Keep that
+// exact oracle and threshold when production targeting moves to revision-7 A;
+// the A identity and reachable/unreachable contracts are tested separately.
+fn legacy_rgb_score(source: &[u8], bytes: &[u8], w: u32, h: u32) -> f32 {
+    let (decoded, dw, dh) = zenwebp::DecodeRequest::new(&zenwebp::DecodeConfig::default(), bytes)
+        .decode_rgb()
+        .unwrap();
+    assert_eq!((dw, dh), (w, h));
+    zensim::Zensim::new(zensim::ZensimProfile::latest())
+        .compute(
+            &zensim::RgbSlice::new(bytemuck::cast_slice(source), w as usize, h as usize),
+            &zensim::RgbSlice::new(bytemuck::cast_slice(&decoded), w as usize, h as usize),
+        )
+        .unwrap()
+        .score() as f32
+}
+
 #[test]
-fn per_segment_correction_converges_on_color_blocks() {
-    // Phase 3: color_blocks content (4 flat regions) has segment-able
-    // structure. The default 4-segment config should converge within
-    // the pass budget. We don't assert "fewer bytes than global-q"
-    // because per-segment correction trades off bytes for spatial
-    // accuracy — it's a correctness test, not a parsimony test.
+fn legacy_color_block_quality_floor_with_four_segments() {
     let (rgb, w, h) = color_blocks_256();
     let cfg = LossyConfig::new()
         .with_method(4)
@@ -270,11 +282,11 @@ fn per_segment_correction_converges_on_color_blocks() {
         "score non-finite: {}",
         metrics.achieved_score
     );
-    // Generous band.
+    let legacy_score = legacy_rgb_score(&rgb, &bytes, w, h);
     assert!(
-        metrics.achieved_score >= 75.0,
+        legacy_score >= 75.0,
         "achieved {} < 75 for target 82 on color_blocks (passes={})",
-        metrics.achieved_score,
+        legacy_score,
         metrics.passes_used
     );
     eprintln!(
@@ -286,9 +298,7 @@ fn per_segment_correction_converges_on_color_blocks() {
 }
 
 #[test]
-fn per_segment_disabled_when_one_segment() {
-    // num_segments=1 disables Phase 3 → global-q step takes over.
-    // Convergence should still work; just via a different path.
+fn legacy_color_block_quality_floor_with_one_segment() {
     let (rgb, w, h) = color_blocks_256();
     let cfg = LossyConfig::new()
         .with_method(4)
@@ -302,11 +312,13 @@ fn per_segment_disabled_when_one_segment() {
         .encode_with_metrics()
         .expect("encode failed");
     assert!(!bytes.is_empty());
+    let legacy_score = legacy_rgb_score(&rgb, &bytes, w, h);
     assert!(
-        metrics.achieved_score >= 75.0,
+        legacy_score >= 75.0,
         "achieved {} < 75 for target 82 with segments=1",
-        metrics.achieved_score
+        legacy_score
     );
+    assert!(metrics.achieved_score.is_finite());
 }
 
 #[test]

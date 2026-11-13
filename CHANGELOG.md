@@ -29,6 +29,12 @@ earlier history lives in git log and LOG.md.)
 
 ### Changed
 
+- Production `target-zensim` now measures adopted revision-7 zensim A through
+  a pinned private dependency alias, using score-only APIs. Reported scores and
+  target semantics change from the legacy 0.2.7 metric. Regression quality
+  floors retain their original metric; historical starting-quality tables are
+  seeds rather than revision-7 calibration. Nested recompression is unchanged.
+
 - Accept the archmage and magetypes 0.9.31 stable release.
 
 - Converge root, fuzz and recompress on the shared core/pixel revisions; preserve legacy metadata-setter coverage and the recompress Profile A calibration. Checked metadata retention remains unsupported. See [qualification](benchmarks/sibling_cohort_2026-11-05.pointer.md) (`a6f84b56`).

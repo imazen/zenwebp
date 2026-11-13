@@ -2228,6 +2228,18 @@ dependencies = [
 [[package]]
 name = "zenpredict"
 version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f6470acef02352e08e68f05cf80e5d66588844a366ad2038ad97beb8eb2bf652"
+dependencies = [
+ "archmage",
+ "bytemuck",
+ "libm",
+ "lz4_flex 0.14.0",
+]
+
+[[package]]
+name = "zenpredict"
+version = "0.2.0"
 source = "git+https://github.com/imazen/zenanalyze?rev=05de3cbc44b19d8769077d99710b0146c761d6df#05de3cbc44b19d8769077d99710b0146c761d6df"
 dependencies = [
  "archmage",
@@ -2287,6 +2299,21 @@ dependencies = [
 [[package]]
 name = "zensim"
 version = "0.3.0"
+source = "git+https://github.com/imazen/zensim?rev=220dfc6a693ef8b1d6fd11c28c6a5e2cad64bd48#220dfc6a693ef8b1d6fd11c28c6a5e2cad64bd48"
+dependencies = [
+ "archmage",
+ "bytemuck",
+ "enough",
+ "libm",
+ "linear-srgb",
+ "magetypes",
+ "thiserror",
+ "zenpredict 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "zensim"
+version = "0.3.0"
 source = "git+https://github.com/imazen/zensimx?rev=6c7c14a300ace3b0e1631b754faf8bd99aebbcdf#6c7c14a300ace3b0e1631b754faf8bd99aebbcdf"
 dependencies = [
  "archmage",
@@ -2296,7 +2323,7 @@ dependencies = [
  "linear-srgb",
  "magetypes",
  "thiserror",
- "zenpredict",
+ "zenpredict 0.2.0 (git+https://github.com/imazen/zenanalyze?rev=05de3cbc44b19d8769077d99710b0146c761d6df)",
 ]
 
 [[package]]
@@ -2358,10 +2385,11 @@ dependencies = [
  "zenpixels",
  "zenpixels-convert",
  "zenpng",
- "zenpredict",
+ "zenpredict 0.2.0 (git+https://github.com/imazen/zenanalyze?rev=05de3cbc44b19d8769077d99710b0146c761d6df)",
  "zenresize",
  "zensim 0.2.7",
- "zensim 0.3.0",
+ "zensim 0.3.0 (git+https://github.com/imazen/zensim?rev=220dfc6a693ef8b1d6fd11c28c6a5e2cad64bd48)",
+ "zensim 0.3.0 (git+https://github.com/imazen/zensimx?rev=6c7c14a300ace3b0e1631b754faf8bd99aebbcdf)",
  "zensim-regress",
  "zenyuv",
 ]

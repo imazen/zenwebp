@@ -24,13 +24,18 @@ those git deps into zenwebp's core graph. Build it from its own directory:
 path-filtered + **weekly schedule** for toolchain drift, `--locked`, no
 sibling checkouts). Bump the revs deliberately, then `cargo update` there.
 
-**Two zensims exist in this repo.** The main crate takes `zensim = "0.2"`
-from the **registry** (locked at 0.2.7); the nested workspace takes **zensim
-0.3.0 at a pinned git rev**. A broken bump can redden `recompress.yml` while
-zenwebp's core CI stays green — the isolation works. It also means the two see different APIs: 0.2.7
-predates the generation-A deprecation, so `ZensimProfile::latest()` in
-`tests/` and `dev/` is fine there, and would only start warning if the main
-crate is ever bumped to zensim 0.3.
+**Production targeting uses adopted revision-7 A (2026-11-13).** The optional
+`zensim-a` alias pins imazen/zensim `220dfc6a`; `target-zensim` measures the
+actual reconstruction with `ZensimProfile::A` and score-only APIs. The ordinary
+regression tests retain registry zensim 0.2.7 and their original quality floors.
+The two color-boundary floors are independently rescored on that original
+metric; revision-7 identity, explicit SharpYUV reachability and strict refusal
+are separate controls in `tests/target_zensim_a.rs`. Do not reinterpret the old
+calibration scores as revision-7 A or replace a floor with a lower number.
+
+The historical bucket tables are initial guesses, not a current-model fit.
+The nested recompress workspace and its calibration have not been migrated.
+The following recompress instructions describe its historical profile contract.
 
 **The recompress workspace pins `ZensimProfile::A` on purpose, via an
 explicit `deprecated-profiles` feature.** zensim 0.3.0 deprecated
@@ -1054,6 +1059,14 @@ is essentially the current implementation.
 | choose_macroblock_info | 119M | 5.4% |
 
 ## Known Bugs
+
+- Fixed 2026-11-13: production target-zensim used registry 0.2.7 while the
+  requested codec metric is adopted revision-7 A. The independent model-identity
+  regression failed before migration (61.284134 reported vs A 44.012302).
+  Production now pins and explicitly names A, without generating diagnostic maps.
+  On the color-boundary witness, the ordinary conversion reaches A 73.496860
+  over q0..100 step5; explicit SharpYUV reaches A 82.150421 at q80. Preserve
+  caller conversion choices, honest targets_met, and strict undershoot errors.
 
 - Lossy dimensions >=16384 (issue #121, fixed 2026-11-13): VP8 header masking
   accepted unrepresentable sides and returned broken or wrapped geometry. Shared

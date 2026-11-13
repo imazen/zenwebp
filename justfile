@@ -364,3 +364,10 @@ allocation-i686-host-check:
 # VP8/VP8L dimension boundary and independent decoder regression.
 encode-dimensions-check:
     cargo test --locked --test encode_dimensions
+
+# Production target model identity plus the existing targeting contracts.
+target-zensim-check:
+    cargo test --locked --features target-zensim --test target_zensim --test target_zensim_a
+
+target-zensim-boundary:
+    cargo test --locked --features target-zensim,__expert --test target_zensim_a -- --nocapture
