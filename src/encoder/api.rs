@@ -1299,7 +1299,7 @@ impl<'a> EncodeRequest<'a> {
     }
 
     /// If this request targets a lossy config with `target_zensim`
-    /// set, RGB8 or RGBA8 input, no stride override, and the
+    /// set, RGB8 or RGBA8 input, and the
     /// `target-zensim` feature is on, run the iteration loop and
     /// return the converged bytes. Returns
     /// [`EncodeError::TargetZensimUnsupportedLayout`] when
@@ -1326,7 +1326,7 @@ impl<'a> EncodeRequest<'a> {
     /// silent fallback to single-pass — that would hide the unhonored
     /// target.
     ///
-    /// No stride override; the metadata fields (icc/exif/xmp) are not
+    /// Padded rows are packed before measurement. The metadata fields (icc/exif/xmp) are not
     /// currently honored on the iteration path — if any are set we
     /// fall back to a single-pass encode and return `None` so the
     /// caller can take the normal path. (TODO: thread metadata
@@ -1341,7 +1341,7 @@ impl<'a> EncodeRequest<'a> {
         )>,
     > {
         // Only Rgb8/Rgba8 lossy configs with target_zensim set and no
-        // metadata/stride trigger the iteration path. Other layouts
+        // metadata trigger the iteration path. Other layouts
         // with target_zensim set return a typed error (no silent
         // fallback to single-pass — that would hide the unhonored
         // target). Everything else returns Ok(None) so the caller
@@ -1362,9 +1362,38 @@ impl<'a> EncodeRequest<'a> {
                 return Err(at!(EncodeError::TargetZensimUnsupportedLayout(other)));
             }
         }
-        if self.stride_pixels.is_some() {
-            return Ok(None);
+        self.config
+            .get_limits()
+            .check_dimensions(self.width, self.height)
+            .map_err(|e| at!(EncodeError::InvalidBufferSize(format!("{}", e))))?;
+        let stride = self.stride_pixels.unwrap_or(self.width as usize);
+        if stride < self.width as usize {
+            return Err(at!(EncodeError::InvalidBufferSize(format!(
+                "stride_pixels {} < width {}",
+                stride, self.width
+            ))));
         }
+        validate_buffer_size(
+            self.pixels.len(),
+            self.width,
+            self.height,
+            stride,
+            self.color_type.bytes_per_pixel() as u32,
+        )?;
+        let packed;
+        let pixels = if stride == self.width as usize {
+            self.pixels
+        } else {
+            (packed, _) = convert_to_contiguous(
+                self.pixels,
+                self.width,
+                self.height,
+                stride,
+                self.color_type,
+                self.config.to_params().alloc_pref,
+            )?;
+            &packed
+        };
         if self.icc_profile.is_some() || self.exif_metadata.is_some() || self.xmp_metadata.is_some()
         {
             // Iteration loop currently doesn't thread metadata
@@ -1377,7 +1406,7 @@ impl<'a> EncodeRequest<'a> {
             self.progress,
             |stop, progress| {
                 lossy.encode_pixels_with_metrics(
-                    self.pixels,
+                    pixels,
                     self.color_type,
                     self.width,
                     self.height,

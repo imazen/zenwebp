@@ -1212,3 +1212,12 @@ resolve color using 3/4 output channels. The shared pixel adapter also accepts
 `GRAYA8_SRGB` as La8. `just gray-output-color-check` covers CICP-only input,
 the RGB ICC signature, and exact independent libwebp reconstruction of gray
 and alpha samples. The original channel-count negative control failed.
+
+
+## Known bugs: target input handling (2026-11-13)
+
+Strided RGB8/RGBA8 targeting now validates row geometry and packs padded rows
+once, preserving the exact packed-input candidate, revision-7 A score and pass
+count. The regression fails on the previous silent fallback. Packed rows remain
+borrowed. Metadata (ICC/EXIF/XMP) still triggers the old unmeasured fallback and
+requires a separate repair; this stride fix does not clear metadata targeting.

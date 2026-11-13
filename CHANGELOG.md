@@ -17,6 +17,8 @@ earlier history lives in git log and LOG.md.)
 
 ### Fixed
 
+- Preserve measured revision-7 A targeting on padded RGB/RGBA rows; reject invalid stride and short buffers before measurement.
+
 - The i686 host allocation runner preserves Cargo-reported build/out executable
   paths as well as legacy deps paths; ELF and test-presence gates remain intact.
 - Use allocator-zeroed storage for the VP8L u32 plane; verify valid-layout allocation refusal under a subprocess memory limit.

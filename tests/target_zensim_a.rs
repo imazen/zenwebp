@@ -152,3 +152,50 @@ fn explicit_sharp_yuv_target_and_strict_unreachable_floor() {
         matches!(error.error(), zenwebp::EncodeError::InvalidBufferSize(message) if message.contains("below floor"))
     );
 }
+
+#[test]
+fn padded_rows_keep_the_measured_target() {
+    let (w, h) = (32u32, 24u32);
+    for channels in [3usize, 4] {
+        let layout = if channels == 3 {
+            PixelLayout::Rgb8
+        } else {
+            PixelLayout::Rgba8
+        };
+        let packed: Vec<u8> = (0..w as usize * h as usize * channels)
+            .map(|i| (i.wrapping_mul(37) % 251) as u8)
+            .collect();
+        let stride = w as usize + 7;
+        let mut padded = vec![0xA5; ((h as usize - 1) * stride + w as usize) * channels];
+        for y in 0..h as usize {
+            padded[y * stride * channels..y * stride * channels + w as usize * channels]
+                .copy_from_slice(
+                    &packed[y * w as usize * channels..(y + 1) * w as usize * channels],
+                );
+        }
+        let config = LossyConfig::new()
+            .with_method(2)
+            .with_target_zensim(ZensimTarget::new(50.0).with_max_passes(2));
+        let (expected, em) = EncodeRequest::lossy(&config, &packed, layout, w, h)
+            .encode_with_metrics()
+            .unwrap();
+        let (actual, am) = EncodeRequest::lossy(&config, &padded, layout, w, h)
+            .with_stride(stride)
+            .encode_with_metrics()
+            .unwrap();
+        assert!(
+            am.achieved_score.is_finite(),
+            "stride silently disabled targeting"
+        );
+        assert_eq!(actual, expected);
+        assert_eq!(am.achieved_score.to_bits(), em.achieved_score.to_bits());
+        assert_eq!(am.passes_used, em.passes_used);
+        assert_eq!(am.targets_met, em.targets_met);
+        assert_eq!(am.bytes, actual.len());
+        let error = EncodeRequest::lossy(&config, &padded, layout, w, h)
+            .with_stride(w as usize - 1)
+            .encode_with_metrics()
+            .unwrap_err();
+        assert!(error.to_string().contains("stride_pixels"));
+    }
+}
