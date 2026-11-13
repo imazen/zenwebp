@@ -22,6 +22,11 @@ earlier history lives in git log and LOG.md.)
 
 - Source migration for the shared optional per-call Pulse contract: bounded whole-file decoding forwards `None` unchanged and retains job cancellation. Retained cancellation, supplied control polling and incremental parity controls pass against the paired core revision; see `docs/optional-pulse.md` for qualification scope (`d21253c3`, `6cba688f`).
 
+### Fixed
+
+- Reject lossy dimensions above 16383 before encoding instead of truncating the
+  VP8 frame header (issue #121). Lossless dimensions up to 16384 remain valid.
+
 ### Changed
 
 - Accept the archmage and magetypes 0.9.31 stable release.

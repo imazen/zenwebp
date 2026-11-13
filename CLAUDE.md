@@ -1055,6 +1055,13 @@ is essentially the current implementation.
 
 ## Known Bugs
 
+- Lossy dimensions >=16384 (issue #121, fixed 2026-11-13): VP8 header masking
+  accepted unrepresentable sides and returned broken or wrapped geometry. Shared
+  frame admission now rejects those dimensions before encoding, including target
+  scoring and diagnostic/animation frame paths. VP8L retains its valid 16384
+  boundary. `just encode-dimensions-check` covers both axes with native and
+  independent libwebp decoding; the rejection test failed against 50c378d8.
+
 - WASM gray-CICP control (2026-11-09): the shared unit test referenced the
   native-only libwebp dev dependency, preventing WASM test compilation. It
   now checks the same exact gray/alpha bytes and RGB ICC through the Rust

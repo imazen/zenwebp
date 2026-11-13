@@ -3066,6 +3066,7 @@ pub(crate) fn encode_frame_lossy(
     stop: &dyn enough::Stop,
     progress: &dyn super::api::EncodeProgress,
 ) -> super::api::EncodeResult<super::api::EncodeStats> {
+    super::api::validate_frame_dimensions(width, height, true)?;
     let width_u16: u16 = width
         .try_into()
         .map_err(|_| at!(EncodeError::InvalidDimensions))?;
@@ -3277,6 +3278,7 @@ pub(crate) fn encode_frame_lossy_with_diagnostics(
     stop: &dyn enough::Stop,
     progress: &dyn super::api::EncodeProgress,
 ) -> super::api::EncodeResult<(super::api::EncodeStats, super::api::EncodeDiagnostics)> {
+    super::api::validate_frame_dimensions(width, height, true)?;
     let width_u16: u16 = width
         .try_into()
         .map_err(|_| at!(EncodeError::InvalidDimensions))?;

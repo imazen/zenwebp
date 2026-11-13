@@ -1355,6 +1355,7 @@ impl<'a> EncodeRequest<'a> {
         if lossy.target_zensim.is_none() {
             return Ok(None);
         }
+        validate_frame_dimensions(self.width, self.height, true)?;
         match self.color_type {
             PixelLayout::Rgb8 | PixelLayout::Rgba8 => {}
             other => {
@@ -1464,6 +1465,7 @@ impl<'a> EncodeRequest<'a> {
     }
 
     pub(crate) fn encode_inner(self) -> EncodeResult<(Vec<u8>, EncodeStats)> {
+        validate_frame_dimensions(self.width, self.height, self.config.to_params().use_lossy)?;
         // Validate dimensions against limits
         self.config
             .get_limits()
@@ -1520,6 +1522,15 @@ impl<'a> EncodeRequest<'a> {
         )?;
         Ok((output, stats))
     }
+}
+
+/// VP8 stores dimensions directly in 14 bits; VP8L stores dimension minus one.
+pub(crate) fn validate_frame_dimensions(width: u32, height: u32, lossy: bool) -> EncodeResult<()> {
+    let max_side = if lossy { 16383 } else { 16384 };
+    if width == 0 || height == 0 || width > max_side || height > max_side {
+        return Err(at!(EncodeError::InvalidDimensions));
+    }
+    Ok(())
 }
 
 /// Validate buffer size for encoding.
@@ -2201,6 +2212,7 @@ impl<'a> WebPEncoder<'a> {
         stride: usize,
         color: PixelLayout,
     ) -> EncodeResult<EncodeStats> {
+        validate_frame_dimensions(width, height, self.params.use_lossy)?;
         let mut frame = Vec::new();
 
         // Content-based, like libwebp's WebPPictureHasTransparency: an opaque
@@ -2363,6 +2375,7 @@ impl<'a> WebPEncoder<'a> {
         stride: usize,
         color: PixelLayout,
     ) -> EncodeResult<(EncodeStats, EncodeDiagnostics)> {
+        validate_frame_dimensions(width, height, self.params.use_lossy)?;
         // Lossless and the no-target-zensim diagnostic path don't have
         // segment_map. Emit an empty diagnostics struct in those cases —
         // the iteration loop will fall back to global-q.
