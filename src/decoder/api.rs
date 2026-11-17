@@ -651,7 +651,7 @@ impl<'a> DecodeRequest<'a> {
     /// pixel / memory caps and the allocation policy); this used to discard
     /// the request config entirely (#78-B).
     pub fn decode_yuv420(self) -> DecodeResult<YuvPlanes> {
-        decode_yuv420_with_config(self.data, self.config)
+        decode_yuv420_with_config(self.data, self.config, self.stop)
     }
 
     /// Decode lossy VP8 to RGB.
@@ -967,10 +967,15 @@ impl<'a> WebPDecoder<'a> {
     /// only ever see the default ceilings. (This was the bug that made
     /// `DecodeConfig::limits(...)`'s dimension/pixel/frame caps dead on every
     /// entry point.)
+    ///
+    /// The same applies to `stop`: `read_data()` walks the VP8X chunk list
+    /// before `set_stop` could ever run, so a token must arrive here to abort
+    /// that scan.
     pub(crate) fn new_with_options_and_limits(
         data: &'a [u8],
         webp_decode_options: WebPDecodeOptions,
         limits: super::limits::Limits,
+        stop: Option<&'a dyn enough::Stop>,
     ) -> DecodeResult<Self> {
         // `Limits::max_file_size` had no caller on the native path — the
         // documented 100 MB default was never enforced outside the zencodec
@@ -992,7 +997,7 @@ impl<'a> WebPDecoder<'a> {
             loop_count: LoopCount::Times(NonZeroU16::new(1).unwrap()),
             loop_duration: 0,
             webp_decode_options,
-            stop: None,
+            stop,
             pulse: None,
         };
         decoder.read_data()?;
@@ -1008,6 +1013,7 @@ impl<'a> WebPDecoder<'a> {
             data,
             webp_decode_options,
             super::limits::Limits::default(),
+            None,
         )
     }
 
@@ -1103,6 +1109,11 @@ impl<'a> WebPDecoder<'a> {
                 let mut prev_anmf: Option<bool> = None;
 
                 while position.saturating_add(8) <= self.riff_end {
+                    // A stream of tiny chunks keeps this walk running —
+                    // poll the token each chunk so the scan stays killable.
+                    if let Some(stop) = self.stop {
+                        stop.check().map_err(|r| at!(DecodeError::Cancelled(r)))?;
+                    }
                     match read_chunk_header(&mut self.r) {
                         Ok((chunk, chunk_size, chunk_size_rounded)) => {
                             let range = position + 8..position + 8 + chunk_size;
@@ -1933,11 +1944,11 @@ fn decode_native_internal(
     stop: Option<&dyn enough::Stop>,
     pulse: Option<&dyn how_far::Pulse>,
 ) -> DecodeResult<(Vec<u8>, u32, u32, bool)> {
-    // Limits must reach the constructor so `read_data`'s dimension/frame
-    // gates enforce them; a later `set_limits` would run after those checks.
+    // Limits and the stop token must reach the constructor so `read_data`'s
+    // dimension/frame gates and the VP8X chunk walk see them; a later
+    // `set_limits`/`set_stop` runs after those checks.
     let mut decoder =
-        WebPDecoder::new_with_options_and_limits(data, options.clone(), limits.clone())?;
-    decoder.set_stop(stop);
+        WebPDecoder::new_with_options_and_limits(data, options.clone(), limits.clone(), stop)?;
     decoder.set_pulse(pulse);
     let (w, h) = decoder.dimensions();
     let output_size = decoder
@@ -2394,16 +2405,24 @@ pub fn decode_bgr_into(
 /// [`YuvPlanes`] containing separate Y, U, and V buffers.
 #[track_caller]
 pub fn decode_yuv420(data: &[u8]) -> DecodeResult<YuvPlanes> {
-    decode_yuv420_with_config(data, &DecodeConfig::default())
+    decode_yuv420_with_config(data, &DecodeConfig::default(), None)
 }
 
 /// [`decode_yuv420`] under a caller-supplied [`DecodeConfig`]: the config's
 /// limits gate the header (dimensions / pixels / frames) and decide whether
 /// the plane buffers are allocated fallibly.
 #[track_caller]
-fn decode_yuv420_with_config(data: &[u8], config: &DecodeConfig) -> DecodeResult<YuvPlanes> {
-    let decoder =
-        WebPDecoder::new_with_options_and_limits(data, config.to_options(), config.limits.clone())?;
+fn decode_yuv420_with_config(
+    data: &[u8],
+    config: &DecodeConfig,
+    stop: Option<&dyn enough::Stop>,
+) -> DecodeResult<YuvPlanes> {
+    let decoder = WebPDecoder::new_with_options_and_limits(
+        data,
+        config.to_options(),
+        config.limits.clone(),
+        stop,
+    )?;
     let alloc_pref = config.limits.alloc_pref;
     refuse_animation(&decoder)?;
 
@@ -2412,7 +2431,7 @@ fn decode_yuv420_with_config(data: &[u8], config: &DecodeConfig) -> DecodeResult
         if let Some(range) = decoder.chunks.get(&WebPRiffChunk::VP8) {
             let data_slice = decoder.chunk_slice(range)?;
             let mut ctx = super::vp8v2::DecoderContext::new();
-            let frame = ctx.decode_to_frame(data_slice)?;
+            let frame = ctx.decode_to_frame_with_stop(data_slice, stop)?;
 
             let w = u32::from(frame.width);
             let h = u32::from(frame.height);
