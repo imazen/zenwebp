@@ -247,6 +247,12 @@ See `docs/PERFORMANCE.md` for benchmarks, `docs/CALL-TREE.md` for SIMD tiers, `d
 
 **Decoder v2** (`src/decoder/vp8v2/`): bit-exact with libwebp, 1.09-1.15x speed, streaming cache→RGB (~100KB peak). Use for all new decode work.
 
+Related: **zenvp8** in `zenextras/research/media-codecs/zenvp8` (merged to
+zenextras main 2026-11-17) is the full VP8 *video* codec — inter frames,
+LAST/GOLDEN/ALTREF refs, libvpx-semantic loop filter — whose intra core was
+seeded from vp8v2 (`PORTED-FROM.md` maps file-by-file provenance). zenextras
+issue #59 tracks productionizing it.
+
 **Pixel-exact gate**: `tests/v2_pixel_perfect.rs` (tolerance 0 vs libwebp). Lossless: `examples/lossless_rt_check.rs` (24/24 exact).
 
 **Wide-corpus decode parity (2026-10-01)**: `dev/decode_parity_sweep.rs`
