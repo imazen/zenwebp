@@ -113,6 +113,7 @@ impl<'a> AnimationDecoder<'a> {
             data,
             config.to_options(),
             config.limits.clone(),
+            None,
         )?;
         if !decoder.is_animated() {
             return Err(at!(DecodeError::InvalidParameter(

@@ -64,9 +64,22 @@ impl DecoderContext {
     ///
     /// The `data` must be the raw VP8 bitstream (inside the RIFF/WebP
     /// container, after the VP8 chunk header has been stripped).
+    #[allow(dead_code)] // only test code calls the un-stopped variant
     pub fn decode_to_frame(&mut self, data: &[u8]) -> Result<Frame, whereat::At<DecodeError>> {
         self.read_frame_header(data)?;
         self.decode_to_frame_internal(None, None)
+            .map_err(|e| at!(DecodeError::from(e)))
+    }
+
+    /// [`Self::decode_to_frame`] with cancellation checked once per
+    /// macroblock row; a fired token aborts with [`DecodeError::Cancelled`].
+    pub(crate) fn decode_to_frame_with_stop(
+        &mut self,
+        data: &[u8],
+        stop: Option<&dyn enough::Stop>,
+    ) -> Result<Frame, whereat::At<DecodeError>> {
+        self.read_frame_header(data)?;
+        self.decode_to_frame_internal(stop, None)
             .map_err(|e| at!(DecodeError::from(e)))
     }
 
