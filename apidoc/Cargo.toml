@@ -8,7 +8,7 @@ edition = "2024"
 publish = false
 
 [dependencies]
-zenutils-apidoc = "0.1.0"
+zenutils-apidoc = "0.1.1"
 
 # Self-contained: the repo root is a single-package manifest (deliberately
 # not a workspace — see the root Cargo.toml NOTE) with no [workspace] table

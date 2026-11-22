@@ -5,6 +5,8 @@ earlier history lives in git log and LOG.md.)
 
 ## [Unreleased]
 
+- Bump core/dev dependency minimums (`enough`, `garb`, `linear-srgb`, `bytemuck`, `imgref`, `rgb`, `thiserror`, `rayon`, `hashbrown`, `butteraugli`, `zenutils-apidoc`), advance `zenflate` and `zenanalyze` patches, refresh root/fuzz/apidoc lockfiles while retaining the `zencodec`/`zenpixels` cohort, and pass `--security-opt seccomp=unconfined` on CI `i686` cross containers.
+
 - Run the cross-built i686 allocation subprocess control on the native host
   when qualifying CI, retaining its refusal/abort assertions and cross builds.
 
