@@ -146,7 +146,7 @@ jobs:
         # in the manifest resolves to /zenanalyze. Cross 0.2.5 doesn't
         # auto-mount path deps that live outside the repo dir.
         env:
-          CROSS_CONTAINER_OPTS: "-v ${{ github.workspace }}/../zenanalyze:/zenanalyze -v ${{ github.workspace }}/.corpus-cache:/codec-corpus"
+          CROSS_CONTAINER_OPTS: "--security-opt seccomp=unconfined -v ${{ github.workspace }}/../zenanalyze:/zenanalyze -v ${{ github.workspace }}/.corpus-cache:/codec-corpus"
           CODEC_CORPUS_CACHE: /codec-corpus
         # The subprocess allocation probe runs below from this same cross-built
         # i686 binary, outside the container that rejects spawn with ENOSYS.
@@ -155,7 +155,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libc6-i386 lib32gcc-s1
       - name: Run the cross-built i686 allocation control on the host
         env:
-          CROSS_CONTAINER_OPTS: "-v ${{ github.workspace }}/../zenanalyze:/zenanalyze"
+          CROSS_CONTAINER_OPTS: "--security-opt seccomp=unconfined -v ${{ github.workspace }}/../zenanalyze:/zenanalyze"
         run: |
           cross test --locked --target i686-unknown-linux-gnu --features inventory --lib --no-run --message-format=json > target/i686-allocation-artifacts.json
           python3 scripts/run-built-i686-allocation-test.py target/i686-allocation-artifacts.json target
