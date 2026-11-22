@@ -2392,7 +2392,7 @@ checksum = "00f1f60154ad4ef9871d606765c3ea037cde93bbd77536327b594de8f82df1cb"
 [[package]]
 name = "zenanalyze"
 version = "0.2.0"
-source = "git+https://github.com/imazen/zenanalyze?rev=f89156687478186d3b2c54232c3e7b0c29eaed22#f89156687478186d3b2c54232c3e7b0c29eaed22"
+source = "git+https://github.com/imazen/zenanalyze?rev=0bc01d3f4d366029d8103fc3e5fc4341f4fce012#0bc01d3f4d366029d8103fc3e5fc4341f4fce012"
 dependencies = [
  "archmage",
  "garb",
@@ -2406,7 +2406,7 @@ dependencies = [
 [[package]]
 name = "zenanalyze-api"
 version = "0.1.1"
-source = "git+https://github.com/imazen/zenanalyze?rev=f89156687478186d3b2c54232c3e7b0c29eaed22#f89156687478186d3b2c54232c3e7b0c29eaed22"
+source = "git+https://github.com/imazen/zenanalyze?rev=0bc01d3f4d366029d8103fc3e5fc4341f4fce012#0bc01d3f4d366029d8103fc3e5fc4341f4fce012"
 
 [[package]]
 name = "zenbench"
@@ -2484,7 +2484,7 @@ dependencies = [
 [[package]]
 name = "zenflate"
 version = "0.4.1"
-source = "git+https://github.com/imazen/zenflate?rev=f6c96cc68e6ce49473943dba1ff1159bfad7a74d#f6c96cc68e6ce49473943dba1ff1159bfad7a74d"
+source = "git+https://github.com/imazen/zenflate?rev=7270e38faca9cdbae793938fa229d40ac4fe4c39#7270e38faca9cdbae793938fa229d40ac4fe4c39"
 dependencies = [
  "archmage",
  "enough",
@@ -2587,7 +2587,7 @@ dependencies = [
 [[package]]
 name = "zenresize"
 version = "0.3.1"
-source = "git+https://github.com/imazen/zenresize?rev=e3975fb9d6d6b7baa96038a0eb8e27febb37c012#e3975fb9d6d6b7baa96038a0eb8e27febb37c012"
+source = "git+https://github.com/imazen/zenresize?rev=b5afc8adac77b1800c26e6747faac670c0cd34dd#b5afc8adac77b1800c26e6747faac670c0cd34dd"
 dependencies = [
  "archmage",
  "imgref",

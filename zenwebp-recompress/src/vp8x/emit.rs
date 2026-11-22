@@ -309,9 +309,7 @@ fn emit_mb_header(
     } else {
         // Non-B: left/top bpred context = B-mode equivalent (see parse).
         let m = super::parse::ymode_to_bcontext(mb.luma_mode);
-        for i in 0..4 {
-            left.bpred[i] = m;
-        }
+        left.bpred.fill(m);
     }
     emit_uvmode(e, mb.chroma_mode);
     top.bpred = [mb.bpred[12], mb.bpred[13], mb.bpred[14], mb.bpred[15]];

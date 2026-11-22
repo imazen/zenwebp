@@ -213,11 +213,11 @@ pub fn parse_vp8_keyframe(vp8: &[u8]) -> Option<Frame> {
     if lf.enabled {
         lf.update = b.get_flag();
         if lf.update {
-            for i in 0..4 {
-                lf.ref_delta[i] = read_opt_signed(&mut b, 6);
+            for d in &mut lf.ref_delta {
+                *d = read_opt_signed(&mut b, 6);
             }
-            for i in 0..4 {
-                lf.mode_delta[i] = read_opt_signed(&mut b, 6);
+            for d in &mut lf.mode_delta {
+                *d = read_opt_signed(&mut b, 6);
             }
         }
     }
