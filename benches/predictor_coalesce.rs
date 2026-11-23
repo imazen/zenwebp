@@ -3,6 +3,9 @@
 //!
 //! Run with: cargo bench --bench predictor_coalesce --features _benchmarks
 
+#[path = "support/gallery.rs"]
+mod gallery;
+
 use std::path::PathBuf;
 use zenbench::{Throughput, black_box};
 
@@ -90,6 +93,10 @@ const IMAGES: &[TestImage] = &[
 zenbench::main!(lossless_decode);
 
 fn lossless_decode(suite: &mut zenbench::Suite) {
+    if std::env::var("ZENWEBP_BENCH_FIXTURES").as_deref() == Ok("gallery") {
+        gallery::decode(suite, true);
+        return;
+    }
     for img in IMAGES {
         let path = match corpus_path(img.subdir, img.filename) {
             Some(p) => p,

@@ -4,6 +4,9 @@
 //!
 //! Run with: RUSTFLAGS="-C target-cpu=native" cargo bench --bench decode_zenbench
 
+#[path = "support/gallery.rs"]
+mod gallery;
+
 use std::path::PathBuf;
 use zenbench::black_box;
 
@@ -67,6 +70,10 @@ const IMAGES: &[TestImage] = &[
 ];
 
 zenbench::main!(|suite| {
+    if std::env::var("ZENWEBP_BENCH_FIXTURES").as_deref() == Ok("gallery") {
+        gallery::decode(suite, false);
+        return;
+    }
     for img in IMAGES {
         let path = match corpus_path(img.subdir, img.filename) {
             Some(p) => p,
