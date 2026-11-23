@@ -1066,6 +1066,15 @@ is essentially the current implementation.
 
 ## Known Bugs
 
+- Decoder dispatch/code size (2026-11-23): generic VP8L predictor bodies
+  compiled outside x86 feature regions, leaving five SIMD operation shims
+  and seven calls in a release decoder consumer. Keep their forced inlining
+  specific to x86; Wasm retains shared predictor bodies. Wasm loop-filter
+  column gathers/scatters and edge kernels are outlined, and contiguous
+  chroma halves use checked eight-byte loads/stores. Qualification and the
+  active-vs-unused row-pipeline audit are in
+  `benchmarks/dispatch_and_size_2026-11-23.md`.
+
 - Fixed 2026-11-13: Rust 1.100 CI reports the cross-built allocation binary
   under debug/build/.../out; the host runner guessed debug/deps and failed
   before executing it. Preserve the reported target-relative suffix. The full

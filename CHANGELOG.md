@@ -5,6 +5,9 @@ earlier history lives in git log and LOG.md.)
 
 ## [Unreleased]
 
+- Remove VP8L predictor SIMD call shims on x86 and reduce Wasm decoder code
+  duplication in loop-filter edges and chroma row loads/stores.
+
 - Upgrade `archmage` and `magetypes` minimums to `0.9.33`, advance `zenflate`, `zenanalyze`, and `zenresize` patches, refresh `zenwebp-recompress` lockfile and Rust 1.100 clippy loops while retaining the `zencodec`/`zenpixels` cohort.
 
 - Bump core/dev dependency minimums (`enough`, `garb`, `linear-srgb`, `bytemuck`, `imgref`, `rgb`, `thiserror`, `rayon`, `hashbrown`, `butteraugli`, `zenutils-apidoc`), advance `zenflate` and `zenanalyze` patches, refresh root/fuzz/apidoc lockfiles while retaining the `zencodec`/`zenpixels` cohort, and pass `--security-opt seccomp=unconfined` on CI `i686` cross containers.

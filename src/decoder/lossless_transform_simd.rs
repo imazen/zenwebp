@@ -706,6 +706,9 @@ pub(crate) fn add_green_portable<
 // --- Portable predictor helpers using magetypes ---
 
 /// Generic add-from-offset predictor body. Works with any token that supports u8x16.
+/// Keep generic vector bodies inside their caller's target-feature region; an
+/// out-of-line baseline monomorphization creates per-operation SIMD shims.
+#[cfg_attr(target_arch = "x86_64", inline(always))]
 pub(crate) fn predictor_add_body<T: magetypes::simd::backends::U8x16Backend>(
     token: T,
     image_data: &mut [u8],
@@ -728,6 +731,7 @@ pub(crate) fn predictor_add_body<T: magetypes::simd::backends::U8x16Backend>(
 }
 
 /// Generic floor-average predictor body: out[i] += floor_avg(a[i], b[i]).
+#[cfg_attr(target_arch = "x86_64", inline(always))]
 pub(crate) fn predictor_avg_body<T: magetypes::simd::backends::U8x16Backend>(
     token: T,
     image_data: &mut [u8],
@@ -780,6 +784,7 @@ fn chunk32_ref(data: &[u8], offset: usize) -> &[u8; 32] {
 /// native-128-bit `predictor_add_body` (`u8x16`) instead, so this is gated to
 /// match — otherwise it (and its `chunk32` helpers) are dead code there.
 #[cfg(target_arch = "x86_64")]
+#[inline(always)]
 fn predictor_add_body_wide<
     T: magetypes::simd::backends::U8x32Backend + magetypes::simd::backends::U8x16Backend,
 >(
@@ -818,6 +823,7 @@ fn predictor_add_body_wide<
 /// helpers) are out of scope on non-x86_64 targets. Mirrors the gate on the
 /// sibling `predictor_add_body_wide`.
 #[cfg(target_arch = "x86_64")]
+#[inline(always)]
 fn predictor_avg_body_wide<
     T: magetypes::simd::backends::U8x32Backend + magetypes::simd::backends::U8x16Backend,
 >(

@@ -5462,6 +5462,10 @@ pub(crate) fn normal_h_filter_uv_inner_neon(
 
 // ============================================================================
 // WASM SIMD128 filter implementations (wasm32)
+//
+// Keep edge kernels out of line on Wasm. Each combines many gathers/scatters
+// and filter taps; inlining them at every row-loop call site duplicates code.
+// The concrete Wasm token retains SIMD128 inside each shared kernel.
 // ============================================================================
 
 // =============================================================================
@@ -5517,7 +5521,7 @@ fn store_row(buf: &mut [u8], offset: usize, v: v128) {
 
 /// Load a column of 16 bytes (one byte per row, stride apart)
 #[cfg(target_arch = "wasm32")]
-#[inline(always)]
+#[inline(never)]
 fn load_col(buf: &[u8], base: usize, stride: usize) -> v128 {
     u8x16(
         buf[base],
@@ -5541,7 +5545,7 @@ fn load_col(buf: &[u8], base: usize, stride: usize) -> v128 {
 
 /// Store a column of 16 bytes
 #[cfg(target_arch = "wasm32")]
-#[inline(always)]
+#[inline(never)]
 fn store_col(buf: &mut [u8], base: usize, stride: usize, v: v128) {
     buf[base] = u8x16_extract_lane::<0>(v);
     buf[base + stride] = u8x16_extract_lane::<1>(v);
@@ -5763,7 +5767,7 @@ fn do_filter6(
 // =============================================================================
 
 /// Simple vertical filter: processes horizontal edge at `point`, 16 columns wide
-#[rite]
+#[archmage::attune(wasm128, inline(never))]
 pub(crate) fn simple_v_filter16_wasm(
     _token: Wasm128Token,
     buf: &mut [u8],
@@ -5784,7 +5788,7 @@ pub(crate) fn simple_v_filter16_wasm(
 }
 
 /// Simple horizontal filter: processes vertical edge at column x0, 16 rows
-#[rite]
+#[archmage::attune(wasm128, inline(never))]
 pub(crate) fn simple_h_filter16_wasm(
     _token: Wasm128Token,
     buf: &mut [u8],
@@ -5811,7 +5815,7 @@ pub(crate) fn simple_h_filter16_wasm(
 // =============================================================================
 
 /// Normal vertical inner filter (subblock edge)
-#[rite]
+#[archmage::attune(wasm128, inline(never))]
 pub(crate) fn normal_v_filter16_inner_wasm(
     _token: Wasm128Token,
     buf: &mut [u8],
@@ -5842,7 +5846,7 @@ pub(crate) fn normal_v_filter16_inner_wasm(
 }
 
 /// Normal vertical edge filter (macroblock edge)
-#[rite]
+#[archmage::attune(wasm128, inline(never))]
 pub(crate) fn normal_v_filter16_edge_wasm(
     _token: Wasm128Token,
     buf: &mut [u8],
@@ -5877,7 +5881,7 @@ pub(crate) fn normal_v_filter16_edge_wasm(
 }
 
 /// Normal horizontal inner filter (subblock edge): vertical edge at x0, 16 rows
-#[rite]
+#[archmage::attune(wasm128, inline(never))]
 pub(crate) fn normal_h_filter16_inner_wasm(
     _token: Wasm128Token,
     buf: &mut [u8],
@@ -5910,7 +5914,7 @@ pub(crate) fn normal_h_filter16_inner_wasm(
 }
 
 /// Normal horizontal edge filter (macroblock edge): vertical edge at x0, 16 rows
-#[rite]
+#[archmage::attune(wasm128, inline(never))]
 pub(crate) fn normal_h_filter16_edge_wasm(
     _token: Wasm128Token,
     buf: &mut [u8],
@@ -5952,7 +5956,7 @@ pub(crate) fn normal_h_filter16_edge_wasm(
 
 /// Load 8 bytes from U and 8 bytes from V, packed into one u8x16
 #[cfg(target_arch = "wasm32")]
-#[inline(always)]
+#[inline(never)]
 fn load_uv_col(u_buf: &[u8], v_buf: &[u8], u_base: usize, v_base: usize, stride: usize) -> v128 {
     u8x16(
         u_buf[u_base],
@@ -5976,7 +5980,7 @@ fn load_uv_col(u_buf: &[u8], v_buf: &[u8], u_base: usize, v_base: usize, stride:
 
 /// Store 8 bytes to U and 8 bytes to V from packed u8x16
 #[cfg(target_arch = "wasm32")]
-#[inline(always)]
+#[inline(never)]
 fn store_uv_col(
     u_buf: &mut [u8],
     v_buf: &mut [u8],
@@ -6007,50 +6011,23 @@ fn store_uv_col(
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
 fn load_uv_row(u_buf: &[u8], v_buf: &[u8], u_off: usize, v_off: usize) -> v128 {
-    u8x16(
-        u_buf[u_off],
-        u_buf[u_off + 1],
-        u_buf[u_off + 2],
-        u_buf[u_off + 3],
-        u_buf[u_off + 4],
-        u_buf[u_off + 5],
-        u_buf[u_off + 6],
-        u_buf[u_off + 7],
-        v_buf[v_off],
-        v_buf[v_off + 1],
-        v_buf[v_off + 2],
-        v_buf[v_off + 3],
-        v_buf[v_off + 4],
-        v_buf[v_off + 5],
-        v_buf[v_off + 6],
-        v_buf[v_off + 7],
-    )
+    // Each chroma half is contiguous: prove the eight-byte bounds once rather
+    // than emitting a separate checked lane load for every byte at every tap.
+    let u = u64::from_le_bytes(*u_buf[u_off..].first_chunk::<8>().unwrap());
+    let v = u64::from_le_bytes(*v_buf[v_off..].first_chunk::<8>().unwrap());
+    u64x2(u, v)
 }
 
 /// Store UV row
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
 fn store_uv_row(u_buf: &mut [u8], v_buf: &mut [u8], u_off: usize, v_off: usize, v: v128) {
-    u_buf[u_off] = u8x16_extract_lane::<0>(v);
-    u_buf[u_off + 1] = u8x16_extract_lane::<1>(v);
-    u_buf[u_off + 2] = u8x16_extract_lane::<2>(v);
-    u_buf[u_off + 3] = u8x16_extract_lane::<3>(v);
-    u_buf[u_off + 4] = u8x16_extract_lane::<4>(v);
-    u_buf[u_off + 5] = u8x16_extract_lane::<5>(v);
-    u_buf[u_off + 6] = u8x16_extract_lane::<6>(v);
-    u_buf[u_off + 7] = u8x16_extract_lane::<7>(v);
-    v_buf[v_off] = u8x16_extract_lane::<8>(v);
-    v_buf[v_off + 1] = u8x16_extract_lane::<9>(v);
-    v_buf[v_off + 2] = u8x16_extract_lane::<10>(v);
-    v_buf[v_off + 3] = u8x16_extract_lane::<11>(v);
-    v_buf[v_off + 4] = u8x16_extract_lane::<12>(v);
-    v_buf[v_off + 5] = u8x16_extract_lane::<13>(v);
-    v_buf[v_off + 6] = u8x16_extract_lane::<14>(v);
-    v_buf[v_off + 7] = u8x16_extract_lane::<15>(v);
+    *u_buf[u_off..].first_chunk_mut::<8>().unwrap() = u64x2_extract_lane::<0>(v).to_le_bytes();
+    *v_buf[v_off..].first_chunk_mut::<8>().unwrap() = u64x2_extract_lane::<1>(v).to_le_bytes();
 }
 
 /// Normal vertical UV edge filter
-#[rite]
+#[archmage::attune(wasm128, inline(never))]
 pub(crate) fn normal_v_filter_uv_edge_wasm(
     _token: Wasm128Token,
     u_buf: &mut [u8],
@@ -6086,7 +6063,7 @@ pub(crate) fn normal_v_filter_uv_edge_wasm(
 }
 
 /// Normal vertical UV inner filter
-#[rite]
+#[archmage::attune(wasm128, inline(never))]
 pub(crate) fn normal_v_filter_uv_inner_wasm(
     _token: Wasm128Token,
     u_buf: &mut [u8],
@@ -6118,7 +6095,7 @@ pub(crate) fn normal_v_filter_uv_inner_wasm(
 }
 
 /// Normal horizontal UV edge filter
-#[rite]
+#[archmage::attune(wasm128, inline(never))]
 pub(crate) fn normal_h_filter_uv_edge_wasm(
     _token: Wasm128Token,
     u_buf: &mut [u8],
@@ -6157,7 +6134,7 @@ pub(crate) fn normal_h_filter_uv_edge_wasm(
 }
 
 /// Normal horizontal UV inner filter
-#[rite]
+#[archmage::attune(wasm128, inline(never))]
 pub(crate) fn normal_h_filter_uv_inner_wasm(
     _token: Wasm128Token,
     u_buf: &mut [u8],
@@ -6460,10 +6437,10 @@ pub(crate) fn normal_filter_vertical_uv_sub(
 // ============================================================================
 // Single #[arcane] entry point for the entire filter-row loop.
 //
-// All arch-specific filter functions are #[rite] (target_feature + inline),
-// so they get inlined into this single #[arcane] boundary. This eliminates
-// the per-call dispatch overhead (~7.6M instructions per decode for a
-// 1024x1024 image).
+// Native edge filters use #[rite] (target_feature + inline), keeping their
+// arithmetic inside one #[arcane] boundary without per-call dispatch. Wasm
+// shares out-of-line edge kernels instead, retaining SIMD128 while avoiding
+// repeated gather/scatter and filter-tap code at the row-loop call sites.
 // ============================================================================
 
 /// Filter a full row of macroblocks using SIMD, with a single target_feature boundary.
