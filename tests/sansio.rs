@@ -53,8 +53,8 @@ fn assert_parity(data: &[u8]) {
         (Ok(expected), Ok((info, _))) => {
             let pixels = expected.into_buffer();
             assert_eq!((info.width, info.height), (pixels.width(), pixels.height()));
-            assert_eq!(sink.descriptor(), Some(pixels.descriptor()));
-            assert_eq!(sink.bytes(), pixels.into_parts().data);
+            assert_eq!(sink.descriptor(), Some(pixels.spec().clone()));
+            assert_eq!(sink.bytes(), pixels.try_into_vec::<u8>().unwrap());
             assert!(sink.finished());
         }
         (Err(_), Err(zencodec_io::DriveError::Step(StepError::Codec(_)))) => {}
@@ -274,11 +274,11 @@ impl zencodec::source::ReadAt for WindowSource<'_> {
 }
 
 fn assert_other_decode_paths(data: &[u8]) {
-    use zenpixels::PixelDescriptor;
+    use zenpixels::ImageSpec;
     for preferred in [
         &[][..],
-        &[PixelDescriptor::BGRA8_SRGB][..],
-        &[PixelDescriptor::RGBA8_SRGB][..],
+        &[ImageSpec::bgra8_srgb()][..],
+        &[ImageSpec::rgba8_srgb()][..],
     ] {
         let reference = D::new()
             .job()
@@ -295,7 +295,7 @@ fn assert_other_decode_paths(data: &[u8]) {
         let mut row = 0;
         while let Some((y, strip)) = stream.next_batch().unwrap() {
             assert_eq!(y, row);
-            assert_eq!(strip.descriptor(), reference.descriptor());
+            assert_eq!(strip.spec(), reference.spec());
             for r in 0..strip.rows() {
                 actual.extend_from_slice(strip.row(r));
             }
@@ -304,7 +304,7 @@ fn assert_other_decode_paths(data: &[u8]) {
         assert_eq!(row, reference.height());
         let mut expected = Vec::new();
         for row in 0..reference.height() {
-            expected.extend_from_slice(reference.as_slice().row(row));
+            expected.extend_from_slice(reference.as_view().row(row));
         }
         assert_eq!(actual, expected);
         let mut animation = D::new()
@@ -312,9 +312,9 @@ fn assert_other_decode_paths(data: &[u8]) {
             .animation_frame_decoder(Cow::Borrowed(data), preferred)
             .unwrap();
         let frame = animation.render_next_frame_owned(None).unwrap().unwrap();
-        assert_eq!(frame.pixels().descriptor(), reference.descriptor());
+        assert_eq!(frame.pixels().spec(), reference.spec());
         for r in 0..reference.height() {
-            assert_eq!(frame.pixels().row(r), reference.as_slice().row(r));
+            assert_eq!(frame.pixels().row(r), reference.as_view().row(r));
         }
         tk::check_read_at_contract(
             &mut zencodec::source::ReadAtShim(WindowSource(zencodec::source::SliceReadAt::new(
@@ -335,8 +335,8 @@ fn assert_other_decode_paths(data: &[u8]) {
         )
         .unwrap();
         assert!(stats.reads > 0);
-        assert_eq!(sink.descriptor(), Some(reference.descriptor()));
-        assert_eq!(sink.bytes(), reference.into_parts().data);
+        assert_eq!(sink.descriptor(), Some(reference.spec().clone()));
+        assert_eq!(sink.bytes(), reference.try_into_vec::<u8>().unwrap());
     }
 }
 

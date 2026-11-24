@@ -17,7 +17,7 @@ use std::borrow::Cow;
 
 use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
 use zencodec::{Orientation, OrientationHint};
-use zenpixels::PixelDescriptor;
+use zenpixels::ImageSpec;
 use zenwebp::zencodec::WebpDecoderConfig;
 use zenwebp::{EncodeRequest, LosslessConfig, PixelLayout};
 
@@ -73,7 +73,7 @@ fn fixture_with_orientation(orientation: u16) -> Vec<u8> {
 /// Read an RGB pixel from a decoded RGB8 output.
 fn px(out: &zencodec::decode::DecodeOutput, x: u32, y: u32) -> [u8; 3] {
     let ps = out.pixels();
-    assert_eq!(ps.descriptor(), PixelDescriptor::RGB8_SRGB);
+    assert_eq!(ps.spec(), &ImageSpec::rgb8_srgb());
     let row = ps.row(y);
     let off = x as usize * 3;
     [row[off], row[off + 1], row[off + 2]]
@@ -108,7 +108,7 @@ fn orientation_preserve_decode_keeps_stored_pixels() {
     let data = fixture_with_orientation(6);
     let out = WebpDecoderConfig::new()
         .job()
-        .decoder(Cow::Borrowed(&data), &[PixelDescriptor::RGB8_SRGB])
+        .decoder(Cow::Borrowed(&data), &[ImageSpec::rgb8_srgb()])
         .expect("decoder")
         .decode()
         .expect("decode");
@@ -164,7 +164,7 @@ fn orientation_correct_decode_bakes_upright_pixels() {
     let out = WebpDecoderConfig::new()
         .job()
         .with_orientation(OrientationHint::Correct)
-        .decoder(Cow::Borrowed(&data), &[PixelDescriptor::RGB8_SRGB])
+        .decoder(Cow::Borrowed(&data), &[ImageSpec::rgb8_srgb()])
         .expect("decoder")
         .decode()
         .expect("decode");
@@ -217,7 +217,7 @@ fn orientation_correct_on_upright_image_is_noop_but_reports_identity() {
     let out = WebpDecoderConfig::new()
         .job()
         .with_orientation(OrientationHint::Correct)
-        .decoder(Cow::Borrowed(&data), &[PixelDescriptor::RGB8_SRGB])
+        .decoder(Cow::Borrowed(&data), &[ImageSpec::rgb8_srgb()])
         .expect("decoder")
         .decode()
         .expect("decode");
@@ -240,7 +240,7 @@ fn orientation_exact_transform_ignores_exif() {
     let out = WebpDecoderConfig::new()
         .job()
         .with_orientation(OrientationHint::ExactTransform(Orientation::FlipH))
-        .decoder(Cow::Borrowed(&data), &[PixelDescriptor::RGB8_SRGB])
+        .decoder(Cow::Borrowed(&data), &[ImageSpec::rgb8_srgb()])
         .expect("decoder")
         .decode()
         .expect("decode");
@@ -257,4 +257,71 @@ fn orientation_exact_transform_ignores_exif() {
             assert_eq!(px(&out, dx, dy), color_at(sx, sy), "flipped ({sx},{sy})");
         }
     }
+}
+
+#[test]
+fn baked_orientation_retains_icc_origin_and_source_encoding() {
+    let profile = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
+    let data = fixture_with_orientation(6);
+    let data = zenwebp::metadata::embed_icc(&data, profile).expect("attach fixture ICC");
+    let out = WebpDecoderConfig::new()
+        .job()
+        .with_orientation(OrientationHint::CorrectAndTransform(Orientation::Rotate180))
+        .decoder(Cow::Borrowed(&data), &[ImageSpec::rgb8_srgb()])
+        .unwrap()
+        .decode()
+        .unwrap();
+
+    assert_eq!((out.width(), out.height()), DISPLAY);
+    assert_eq!(out.info().orientation, Orientation::Identity);
+    assert_eq!(out.buffer().origin().icc.as_deref(), Some(profile));
+    assert!(out.source_encoding_details().is_some());
+    let view = out.pixels();
+    let zenpixels::ColorSpace::Icc {
+        profile: active, ..
+    } = &view.spec().color
+    else {
+        panic!("missing active RGB ICC");
+    };
+    assert_eq!(active.as_ref(), profile);
+    assert_eq!(view.spec().layout, zenpixels::SampleLayout::RGBA8);
+    let (sw, sh) = STORED;
+    for y in 0..sh {
+        for x in 0..sw {
+            let (dx, dy) = Orientation::Rotate270.forward_map(x, y, sw, sh);
+            let start = dx as usize * 4;
+            let [r, g, b] = color_at(x, y);
+            assert_eq!(&view.row(dy)[start..start + 4], &[r, g, b, 255]);
+        }
+    }
+}
+
+#[test]
+#[allow(deprecated)] // The legacy structured metadata setter is still supported.
+fn animation_encode_serializes_structured_orientation() {
+    use zencodec::encode::{AnimationFrameEncoder, EncodeJob, EncoderConfig};
+    use zenpixels::PixelView;
+    use zenwebp::zencodec::WebpEncoderConfig;
+
+    let mut encoder = WebpEncoderConfig::lossless()
+        .job()
+        .with_metadata_policy(
+            zencodec::Metadata::none().with_orientation(Orientation::Rotate90),
+            zencodec::MetadataPolicy::PreserveExact,
+        )
+        .animation_frame_encoder()
+        .unwrap();
+    for bytes in [[20, 40, 60, 80, 100, 120], [121, 101, 81, 61, 41, 21]] {
+        let view = PixelView::from_packed(&bytes, 2, 1, ImageSpec::rgb8_srgb()).unwrap();
+        encoder.push_frame(view, 15, None).unwrap();
+    }
+    let output = encoder.finish(None).unwrap();
+    let demux = zenwebp::mux::WebPDemuxer::new(output.data()).unwrap();
+    let exif = demux
+        .exif()
+        .expect("structured orientation needs an EXIF chunk");
+    assert_eq!(
+        zencodec::helpers::parse_exif_orientation(exif),
+        Some(Orientation::Rotate90)
+    );
 }

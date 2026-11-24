@@ -21,7 +21,8 @@ use std::time::Instant;
 
 use enough::Unstoppable;
 use rayon::prelude::*;
-use zenpixels_convert::PixelBufferConvertTypedExt;
+use zenpixels::{ImageSpec, PeakSource};
+use zenpixels_convert::{ConvertPolicy, convert_buf};
 use zenpng::PngDecodeConfig;
 
 // 20 log-spaced sizes covering tiny → large.
@@ -53,8 +54,14 @@ fn load_png_rgb8(path: &PathBuf) -> Option<(Vec<u8>, u32, u32)> {
     let output = zenpng::decode(&bytes, &PngDecodeConfig::default(), &Unstoppable).ok()?;
     let w = output.info.width;
     let h = output.info.height;
-    let rgb_buf = output.pixels.to_rgb8();
-    let slice = rgb_buf.as_slice();
+    let rgb_buf = convert_buf(
+        &output.pixels.as_view(),
+        ImageSpec::rgb8_srgb(),
+        &ConvertPolicy::working_linear(),
+        PeakSource::Measured,
+    )
+    .ok()?;
+    let slice = rgb_buf.as_view();
     if let Some(contiguous) = slice.as_contiguous_bytes() {
         return Some((contiguous.to_vec(), w, h));
     }

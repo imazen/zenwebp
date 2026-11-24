@@ -81,10 +81,7 @@ fn pixel_decodes_of_animated_files_return_the_first_frame() {
 
     let out = WebpDecoderConfig::new()
         .job()
-        .decoder(
-            Cow::Borrowed(&data),
-            &[zenpixels::PixelDescriptor::RGBA8_SRGB],
-        )
+        .decoder(Cow::Borrowed(&data), &[zenpixels::ImageSpec::rgba8_srgb()])
         .unwrap()
         .decode()
         .unwrap();

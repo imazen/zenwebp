@@ -7,7 +7,7 @@ use zencodec::{
     decode::{AnimationFrameDecoder, Decode, DecodeJob, DecoderConfig},
     encode::{AnimationFrameEncoder, EncodeJob, EncoderConfig as _},
 };
-use zenpixels::{PixelBuffer, PixelDescriptor};
+use zenpixels::{ImageSpec, PixelBuf};
 use zenwebp::{
     EncoderConfig, PixelLayout,
     mux::{AnimationConfig, AnimationDecoder, AnimationEncoder},
@@ -21,12 +21,12 @@ fn config(lossy: bool) -> EncoderConfig {
         EncoderConfig::new_lossless().with_method(4)
     }
 }
-fn native_encode(frames: &[PixelBuffer], lossy: bool) -> usize {
+fn native_encode(frames: &[PixelBuf], lossy: bool) -> usize {
     let cfg = config(lossy);
     let mut enc = AnimationEncoder::new(256, 256, AnimationConfig::default()).unwrap();
     for (i, frame) in frames.iter().enumerate() {
         enc.add_frame(
-            frame.as_contiguous_bytes().unwrap(),
+            frame.as_view().as_contiguous_bytes().unwrap(),
             PixelLayout::Rgb8,
             i as u32 * 20,
             &cfg,
@@ -35,7 +35,7 @@ fn native_encode(frames: &[PixelBuffer], lossy: bool) -> usize {
     }
     enc.finalize(20).unwrap().len()
 }
-fn shared_encode(frames: &[PixelBuffer], lossy: bool) -> usize {
+fn shared_encode(frames: &[PixelBuf], lossy: bool) -> usize {
     let cfg = if lossy {
         WebpEncoderConfig::lossy().with_quality(75.0).with_method(4)
     } else {
@@ -43,7 +43,7 @@ fn shared_encode(frames: &[PixelBuffer], lossy: bool) -> usize {
     };
     let mut enc = cfg.job().animation_frame_encoder().unwrap();
     for frame in frames {
-        enc.push_frame(frame.as_slice(), 20, None).unwrap();
+        enc.push_frame(frame.as_view(), 20, None).unwrap();
     }
     enc.finish(None).unwrap().len()
 }
@@ -89,7 +89,7 @@ fn bench(suite: &mut Suite) {
                     let offset = ((row + i * 8) * info.width as usize + i * 16) * 3;
                     data.extend_from_slice(&photo[offset..offset + 256 * 3]);
                 }
-                PixelBuffer::from_vec(data, 256, 256, PixelDescriptor::RGB8_SRGB).unwrap()
+                PixelBuf::from_bytes(data, 256, 256, ImageSpec::rgb8_srgb()).unwrap()
             })
             .collect(),
     );

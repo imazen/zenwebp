@@ -62,6 +62,11 @@ earlier history lives in git log and LOG.md.)
 
 ### QUEUED BREAKING CHANGES
 
+- The zencodec adapter uses zenpixels 0.5 `ImageSpec`, `PixelView` and
+  `PixelBuf`. ICC bytes that describe the current pixels live in
+  `ImageSpec::color`. Owned decoded buffers also retain their original color
+  metadata through channel swizzling and orientation correction.
+
 - zencodec 0.2 (operation Pulse): the jobs implement the required `with_pulse`, the animation calls take
   `Option<&dyn zencodec::Pulse>`, and the incremental decoder's `step` takes `Option<&dyn zencodec::Pulse>`. zenwebp requires
   zencodec `>=0.2.0` (`4827b8bb`, `39a79f98`).

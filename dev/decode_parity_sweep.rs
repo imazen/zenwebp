@@ -247,13 +247,20 @@ fn check_file(name: &str, data: &[u8]) -> (Vec<Row>, Vec<(&'static str, String)>
 // ---------------------------------------------------------------------------
 
 fn load_png_rgba8(path: &Path) -> Option<(Vec<u8>, u32, u32, bool)> {
-    use zenpixels_convert::PixelBufferConvertTypedExt;
+    use zenpixels::{ImageSpec, PeakSource};
+    use zenpixels_convert::{ConvertPolicy, convert_buf};
     use zenpng::PngDecodeConfig;
     let bytes = std::fs::read(path).ok()?;
     let output = zenpng::decode(&bytes, &PngDecodeConfig::default(), &zenwebp::Unstoppable).ok()?;
     let (w, h) = (output.info.width, output.info.height);
-    let buf = output.pixels.to_rgba8();
-    let slice = buf.as_slice();
+    let buf = convert_buf(
+        &output.pixels.as_view(),
+        ImageSpec::rgba8_srgb(),
+        &ConvertPolicy::working_linear(),
+        PeakSource::Measured,
+    )
+    .ok()?;
+    let slice = buf.as_view();
     let mut out = Vec::with_capacity((w as usize) * (h as usize) * 4);
     for y in 0..h {
         out.extend_from_slice(&slice.row(y)[..(w as usize) * 4]);

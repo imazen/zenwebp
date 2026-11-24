@@ -184,6 +184,8 @@ pub use decoder::{
 // Re-export Orientation from zenpixels (canonical EXIF orientation for the zen ecosystem)
 pub use zenpixels::Orientation;
 
+mod packed_pixels;
+
 // Re-export core encoder types
 pub use encoder::{
     CostModel, EncodeError, EncodeRequest, EncodeResult, EncoderConfig, ImageMetadata,

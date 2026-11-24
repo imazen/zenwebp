@@ -236,7 +236,7 @@ struct CollectSink {
     buf: Vec<u8>,
     w: u32,
     h: u32,
-    desc: Option<zenpixels::PixelDescriptor>,
+    desc: Option<zenpixels::ImageSpec>,
 }
 
 impl zencodec::decode::DecodeRowSink for CollectSink {
@@ -244,12 +244,12 @@ impl zencodec::decode::DecodeRowSink for CollectSink {
         &mut self,
         width: u32,
         height: u32,
-        descriptor: zenpixels::PixelDescriptor,
+        descriptor: zenpixels::ImageSpec,
     ) -> Result<(), zencodec::decode::SinkError> {
         self.w = width;
         self.h = height;
-        self.desc = Some(descriptor);
-        self.buf = vec![0; width as usize * height as usize * descriptor.bytes_per_pixel()];
+        self.desc = Some(descriptor.clone());
+        self.buf = vec![0; width as usize * height as usize * descriptor.layout.bytes_per_pixel()];
         Ok(())
     }
     fn provide_next_buffer(
@@ -257,11 +257,11 @@ impl zencodec::decode::DecodeRowSink for CollectSink {
         y: u32,
         height: u32,
         width: u32,
-        descriptor: zenpixels::PixelDescriptor,
-    ) -> Result<zenpixels::PixelSliceMut<'_>, zencodec::decode::SinkError> {
-        let row = width as usize * descriptor.bytes_per_pixel();
+        descriptor: zenpixels::ImageSpec,
+    ) -> Result<zenpixels::PixelViewMut<'_>, zencodec::decode::SinkError> {
+        let row = width as usize * descriptor.layout.bytes_per_pixel();
         let start = y as usize * row;
-        zenpixels::PixelSliceMut::new(
+        zenpixels::PixelViewMut::new(
             &mut self.buf[start..start + height as usize * row],
             width,
             height,
@@ -275,13 +275,13 @@ impl zencodec::decode::DecodeRowSink for CollectSink {
     }
 }
 
-fn desc_layout(d: zenpixels::PixelDescriptor) -> Result<&'static str, String> {
-    use zenpixels::PixelDescriptor as P;
-    Ok(if d == P::RGBA8_SRGB {
+fn desc_layout(d: zenpixels::ImageSpec) -> Result<&'static str, String> {
+    use zenpixels::ImageSpec as P;
+    Ok(if d == P::rgba8_srgb() {
         "rgba"
-    } else if d == P::RGB8_SRGB {
+    } else if d == P::rgb8_srgb() {
         "rgb"
-    } else if d == P::BGRA8_SRGB {
+    } else if d == P::bgra8_srgb() {
         "bgra"
     } else {
         return Err(format!("unexpected descriptor {d:?}"));
@@ -291,7 +291,7 @@ fn desc_layout(d: zenpixels::PixelDescriptor) -> Result<&'static str, String> {
 fn zc_push(
     data: &[u8],
     cfg: zenwebp::zencodec::WebpDecoderConfig,
-    preferred: &[zenpixels::PixelDescriptor],
+    preferred: &[zenpixels::ImageSpec],
 ) -> Out {
     use zencodec::decode::{DecodeJob, DecoderConfig as _};
     let mut sink = CollectSink {
@@ -350,7 +350,7 @@ pub fn pack_planes(
 
 /// Decode `data` through zenwebp in `mode`.
 pub fn zen_decode(mode: &str, data: &[u8]) -> Out {
-    use zenpixels::PixelDescriptor as P;
+    use zenpixels::ImageSpec as P;
     use zenwebp::oneshot as o;
     use zenwebp::zencodec::WebpDecoderConfig as Zc;
     let simple = || DecodeConfig::default().upsampling(UpsamplingMethod::Simple);
@@ -384,25 +384,25 @@ pub fn zen_decode(mode: &str, data: &[u8]) -> Out {
             let out = Zc::new().decode(data).map_err(e)?;
             let px = out.pixels();
             let (w, h) = (px.width(), px.rows());
-            let layout = desc_layout(px.descriptor())?;
-            let bpp = px.descriptor().bytes_per_pixel();
+            let layout = desc_layout(px.spec().clone())?;
+            let bpp = px.spec().layout.bytes_per_pixel();
             let mut tight = Vec::with_capacity(w as usize * h as usize * bpp);
             for y in 0..h {
                 tight.extend_from_slice(&px.row(y)[..w as usize * bpp]);
             }
             Ok((to_rgba(&tight, layout), w, h))
         }
-        "zc_push_rgba" => zc_push(data, Zc::new(), &[P::RGBA8_SRGB]),
-        "zc_push_bgra" => zc_push(data, Zc::new(), &[P::BGRA8_SRGB]),
+        "zc_push_rgba" => zc_push(data, Zc::new(), &[P::rgba8_srgb()]),
+        "zc_push_bgra" => zc_push(data, Zc::new(), &[P::bgra8_srgb()]),
         "zc_push_nofancy" => zc_push(
             data,
             Zc::new().with_upsampling(UpsamplingMethod::Simple),
-            &[P::RGBA8_SRGB],
+            &[P::rgba8_srgb()],
         ),
         "zc_push_dither100" => zc_push(
             data,
             Zc::new().with_dithering_strength(100),
-            &[P::RGBA8_SRGB],
+            &[P::rgba8_srgb()],
         ),
         "rgba_nofancy" => request(data, simple(), false),
         "rgb_nofancy" => request(data, simple(), true),

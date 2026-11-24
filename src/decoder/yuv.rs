@@ -908,7 +908,7 @@ fn to_tight_rgb<'a>(
             }
         }
         PixelLayout::Bgr8 => {
-            garb::bytes::bgr_to_rgb_strided(
+            crate::packed_pixels::bgr_to_rgb_strided(
                 src,
                 &mut rgb,
                 w,
@@ -919,7 +919,7 @@ fn to_tight_rgb<'a>(
             .expect("validated sizes");
         }
         PixelLayout::Rgba8 => {
-            garb::bytes::rgba_to_rgb_strided(
+            crate::packed_pixels::rgba_to_rgb_strided(
                 src,
                 &mut rgb,
                 w,
@@ -930,7 +930,7 @@ fn to_tight_rgb<'a>(
             .expect("validated sizes");
         }
         PixelLayout::Bgra8 => {
-            garb::bytes::bgra_to_rgb_strided(
+            crate::packed_pixels::bgra_to_rgb_strided(
                 src,
                 &mut rgb,
                 w,

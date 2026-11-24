@@ -5,4 +5,5 @@ edition = "2024"
 publish = false
 [workspace]
 [dependencies]
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "bfb13e72db869f9609ba8d7f5bb3bdf41b124bdd", default-features = false }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "42a0c5c83c5c418950eb528d92d57788f6700bcf", default-features = false }
+whereat = { version = "0.1.5", default-features = false }

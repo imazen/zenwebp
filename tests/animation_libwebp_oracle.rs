@@ -14,20 +14,20 @@ use zencodec::decode::{AnimationFrameDecoder as _, DecodeJob as _, DecoderConfig
 use zencodec::encode::{
     AnimationFrameEncoder as _, EncodeJob as _, Encoder as _, EncoderConfig as _,
 };
-use zenpixels::{PixelBuffer, PixelDescriptor};
+use zenpixels::{ImageSpec, PixelBuf};
 use zenwebp::zencodec::{WebpDecoderConfig, WebpEncoderConfig};
 
 const EXIF: &[u8] = b"Exif\0\0oracle-exif";
 const XMP: &[u8] = b"<x:xmpmeta>oracle</x:xmpmeta>";
 
-fn frame(seed: u8) -> PixelBuffer {
+fn frame(seed: u8) -> PixelBuf {
     let px: Vec<u8> = (0..8 * 8)
         .flat_map(|i| {
             let i = i as u8;
             [i.wrapping_mul(7) ^ seed, seed.wrapping_add(i), 255 - i, 255]
         })
         .collect();
-    PixelBuffer::from_vec(px, 8, 8, PixelDescriptor::RGBA8_SRGB).unwrap()
+    PixelBuf::from_bytes(px, 8, 8, ImageSpec::rgba8_srgb()).unwrap()
 }
 
 /// libwebp frame durations: differences of `WebPAnimDecoderGetNext`'s end
@@ -55,8 +55,8 @@ fn encode(durations: &[u32], plays: u32, metadata: zencodec::Metadata) -> (Vec<u
     let mut sources = Vec::new();
     for (i, &ms) in durations.iter().enumerate() {
         let f = frame(i as u8 * 40 + 1);
-        sources.push(f.as_slice().as_strided_bytes().to_vec());
-        enc.push_frame_timed(f.as_slice(), FrameDuration::from_millis(ms), None)
+        sources.push(f.as_view().as_strided_bytes().to_vec());
+        enc.push_frame_timed(f.as_view(), FrameDuration::from_millis(ms), None)
             .unwrap();
     }
     (enc.finish(None).unwrap().data().to_vec(), sources)
@@ -107,7 +107,7 @@ fn single_frame_animation_encodes_as_still() {
         .with_metadata_policy(metadata(), zencodec::MetadataPolicy::PreserveExact)
         .encoder()
         .unwrap()
-        .encode(frame(1).as_slice())
+        .encode(frame(1).as_view())
         .unwrap();
     assert!(
         data == still.data(),
@@ -171,7 +171,7 @@ fn animation_decode_matches_libwebp_and_keeps_icc() {
         .unwrap();
     let mut dec = WebpDecoderConfig::new()
         .job()
-        .animation_frame_decoder(Cow::Borrowed(&data), &[PixelDescriptor::RGBA8_SRGB])
+        .animation_frame_decoder(Cow::Borrowed(&data), &[ImageSpec::rgba8_srgb()])
         .unwrap();
     let durations = libwebp_durations(&lib);
     assert_eq!(durations, [40, 60]);
@@ -179,8 +179,10 @@ fn animation_decode_matches_libwebp_and_keeps_icc() {
         let f = dec.render_next_frame(None).unwrap().unwrap();
         let px = f.pixels();
         assert_eq!(f.duration(), FrameDuration::from_millis(durations[i]));
-        let ctx = px.color_context().expect("frame carries a color context");
-        assert_eq!(ctx.icc.as_deref(), Some(icc), "frame {i} ICC");
+        let zenpixels::ColorSpace::Icc { profile, .. } = &px.spec().color else {
+            panic!("frame carries an active ICC profile")
+        };
+        assert_eq!(profile.as_ref(), icc, "frame {i} ICC");
         let mut got = Vec::new();
         for y in 0..px.rows() {
             got.extend_from_slice(px.row(y));

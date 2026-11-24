@@ -1756,7 +1756,7 @@ fn convert_to_contiguous(
             // Convert BGRA to RGBA
             let mut out = alloc_px(npixels * 4)?;
             for y in 0..hh {
-                garb::bytes::bgra_to_rgba(
+                crate::packed_pixels::bgra_to_rgba(
                     &data[y * stride_bytes..y * stride_bytes + row_bytes],
                     &mut out[y * ww * 4..(y + 1) * ww * 4],
                 )
@@ -1768,7 +1768,7 @@ fn convert_to_contiguous(
             // Convert ARGB to RGBA
             let mut out = alloc_px(npixels * 4)?;
             for y in 0..hh {
-                garb::bytes::argb_to_rgba(
+                crate::packed_pixels::argb_to_rgba(
                     &data[y * stride_bytes..y * stride_bytes + row_bytes],
                     &mut out[y * ww * 4..(y + 1) * ww * 4],
                 )
@@ -1792,7 +1792,7 @@ fn convert_to_contiguous(
             // Grayscale+Alpha → RGBA
             let mut out = alloc_px(npixels * 4)?;
             for y in 0..hh {
-                garb::bytes::gray_alpha_to_rgba(
+                crate::packed_pixels::gray_alpha_to_rgba(
                     &data[y * stride_bytes..y * stride_bytes + row_bytes],
                     &mut out[y * ww * 4..(y + 1) * ww * 4],
                 )
