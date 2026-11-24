@@ -1,12 +1,16 @@
 #![cfg(not(target_arch = "wasm32"))]
-//! Benchmark comparing scalar vs SIMD YUV conversion.
+//! Compare two limited-range BT.601 4:2:0 algorithms on nonlinear RGB.
+//! Both center chroma over a 2×2 footprint and replicate odd edges. The
+//! fixed reference averages codes before applying the WebP 16-bit equations
+//! with half-up rounding. The external yuv crate uses its Balanced
+//! coefficients and its own averaging and rounding.
 //!
 //! Run with: cargo test --release yuv_benchmark -- --nocapture
 
 use std::time::Instant;
 
 // Scalar implementation (copied from yuv.rs for comparison)
-mod scalar {
+mod fixed_reference {
     const YUV_FIX: i32 = 16;
     const YUV_HALF: i32 = 1 << (YUV_FIX - 1);
 
@@ -42,11 +46,7 @@ mod scalar {
         ((v1 + v2 + v3 + v4 + (YUV_HALF << 2)) >> (YUV_FIX + 2)) as u8
     }
 
-    pub fn convert_image_yuv_scalar(
-        image_data: &[u8],
-        width: u16,
-        height: u16,
-    ) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    pub fn convert(image_data: &[u8], width: u16, height: u16) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
         const BPP: usize = 3;
         let width = usize::from(width);
         let height = usize::from(height);
@@ -165,18 +165,14 @@ mod scalar {
     }
 }
 
-// SIMD implementation using yuv crate
-mod simd {
+// External yuv crate using Balanced conversion
+mod external_yuv {
     use yuv::{
         YuvChromaSubsampling, YuvConversionMode, YuvPlanarImageMut, YuvRange, YuvStandardMatrix,
         rgb_to_yuv420,
     };
 
-    pub fn convert_image_yuv_simd(
-        image_data: &[u8],
-        width: u16,
-        height: u16,
-    ) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    pub fn convert(image_data: &[u8], width: u16, height: u16) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
         let width_usize = usize::from(width);
         let height_usize = usize::from(height);
         let mb_width = width_usize.div_ceil(16);
@@ -300,70 +296,68 @@ fn benchmark_yuv_conversion() {
         let megapixels = pixels as f64 / 1_000_000.0;
 
         // Warm up
-        let _ = scalar::convert_image_yuv_scalar(&image, *width as u16, *height as u16);
-        let _ = simd::convert_image_yuv_simd(&image, *width as u16, *height as u16);
+        let _ = fixed_reference::convert(&image, *width as u16, *height as u16);
+        let _ = external_yuv::convert(&image, *width as u16, *height as u16);
 
-        // Benchmark scalar
+        // Benchmark fixed reference
         let start = Instant::now();
         for _ in 0..iterations {
-            let _ = scalar::convert_image_yuv_scalar(&image, *width as u16, *height as u16);
+            let _ = fixed_reference::convert(&image, *width as u16, *height as u16);
         }
-        let scalar_elapsed = start.elapsed();
-        let scalar_mpps = (megapixels * iterations as f64) / scalar_elapsed.as_secs_f64();
+        let fixed_elapsed = start.elapsed();
+        let fixed_mpps = (megapixels * iterations as f64) / fixed_elapsed.as_secs_f64();
 
-        // Benchmark SIMD
+        // Benchmark external yuv
         let start = Instant::now();
         for _ in 0..iterations {
-            let _ = simd::convert_image_yuv_simd(&image, *width as u16, *height as u16);
+            let _ = external_yuv::convert(&image, *width as u16, *height as u16);
         }
-        let simd_elapsed = start.elapsed();
-        let simd_mpps = (megapixels * iterations as f64) / simd_elapsed.as_secs_f64();
+        let external_elapsed = start.elapsed();
+        let external_mpps = (megapixels * iterations as f64) / external_elapsed.as_secs_f64();
 
-        let speedup = scalar_elapsed.as_secs_f64() / simd_elapsed.as_secs_f64();
+        let speedup = fixed_elapsed.as_secs_f64() / external_elapsed.as_secs_f64();
 
         println!("{} ({}x{}):", name, width, height);
         println!(
-            "  Scalar: {:>8.2} ms ({:.1} Mpix/s)",
-            scalar_elapsed.as_secs_f64() * 1000.0 / iterations as f64,
-            scalar_mpps
+            "  Fixed reference: {:>8.2} ms ({:.1} Mpix/s)",
+            fixed_elapsed.as_secs_f64() * 1000.0 / iterations as f64,
+            fixed_mpps
         );
         println!(
-            "  SIMD:   {:>8.2} ms ({:.1} Mpix/s)",
-            simd_elapsed.as_secs_f64() * 1000.0 / iterations as f64,
-            simd_mpps
+            "  External yuv: {:>8.2} ms ({:.1} Mpix/s)",
+            external_elapsed.as_secs_f64() * 1000.0 / iterations as f64,
+            external_mpps
         );
-        println!("  Speedup: {:.1}x", speedup);
+        println!("  Fixed/external time: {:.1}x", speedup);
         println!();
     }
 }
 
 #[test]
-fn verify_yuv_output_similarity() {
-    // Test that SIMD and scalar produce similar results
-    // Note: They won't be identical due to different rounding/coefficient precision
+fn external_balanced_and_fixed_reference_limited_bt601_420() {
     let width = 64u16;
     let height = 64u16;
     let image = generate_test_image(width as usize, height as usize);
 
-    let (y_scalar, u_scalar, v_scalar) = scalar::convert_image_yuv_scalar(&image, width, height);
-    let (y_simd, u_simd, v_simd) = simd::convert_image_yuv_simd(&image, width, height);
+    let (y_fixed, u_fixed, v_fixed) = fixed_reference::convert(&image, width, height);
+    let (y_external, u_external, v_external) = external_yuv::convert(&image, width, height);
 
     // Calculate max differences
-    let y_max_diff = y_scalar
+    let y_max_diff = y_fixed
         .iter()
-        .zip(y_simd.iter())
+        .zip(y_external.iter())
         .map(|(&a, &b)| (a as i32 - b as i32).abs())
         .max()
         .unwrap_or(0);
-    let u_max_diff = u_scalar
+    let u_max_diff = u_fixed
         .iter()
-        .zip(u_simd.iter())
+        .zip(u_external.iter())
         .map(|(&a, &b)| (a as i32 - b as i32).abs())
         .max()
         .unwrap_or(0);
-    let v_max_diff = v_scalar
+    let v_max_diff = v_fixed
         .iter()
-        .zip(v_simd.iter())
+        .zip(v_external.iter())
         .map(|(&a, &b)| (a as i32 - b as i32).abs())
         .max()
         .unwrap_or(0);
@@ -377,4 +371,19 @@ fn verify_yuv_output_similarity() {
     assert!(y_max_diff <= 2, "Y difference too large: {}", y_max_diff);
     assert!(u_max_diff <= 2, "U difference too large: {}", u_max_diff);
     assert!(v_max_diff <= 2, "V difference too large: {}", v_max_diff);
+}
+
+#[test]
+fn limited_bt601_black_and_white_code_anchors() {
+    for (code, y) in [(0, 16), (255, 235)] {
+        let rgb = vec![code; 3 * 3 * 5];
+        for (luma, cb, cr) in [
+            fixed_reference::convert(&rgb, 3, 5),
+            external_yuv::convert(&rgb, 3, 5),
+        ] {
+            assert_eq!(luma, vec![y; 16 * 16]);
+            assert_eq!(cb, vec![128; 8 * 8]);
+            assert_eq!(cr, vec![128; 8 * 8]);
+        }
+    }
 }

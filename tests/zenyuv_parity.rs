@@ -1,9 +1,12 @@
-//! Verify zenyuv Limited BT.601 output matches zenwebp's scalar rgb_to_y/u/v.
+//! Compare two limited-range BT.601 4:4:4 equations on nonlinear RGB.
+//! Chroma is co-sited per pixel. The WebP equation uses 16-bit coefficients
+//! and half-up rounding. The external zenyuv BT.601 kernels use 15-bit
+//! coefficients or f32, with their own rounding.
 //!
 //! Run: `cargo test --release --test zenyuv_parity -- --nocapture`
 
 #[test]
-fn zenyuv_vs_zenwebp_scalar_limited_bt601() {
+fn external_zenyuv_vs_webp_fixed_limited_bt601_444() {
     // zenwebp's scalar constants (from decoder/yuv.rs)
     const YUV_FIX: i32 = 16;
     const YUV_HALF: i32 = 1 << (YUV_FIX - 1);
@@ -46,6 +49,12 @@ fn zenyuv_vs_zenwebp_scalar_limited_bt601() {
                     zenyuv::YuvContext::new(zenyuv::Range::Limited, zenyuv::Matrix::Bt601);
                 ctx.encode_444_u8(&rgb, &mut y, &mut cb, &mut cr, 1, 1);
 
+                if rgb == [0, 0, 0] || rgb == [255, 255, 255] {
+                    let y_anchor = if r == 0 { 16 } else { 235 };
+                    assert_eq!([zy, zu, zv], [y_anchor, 128, 128]);
+                    assert_eq!([y[0], cb[0], cr[0]], [y_anchor, 128, 128]);
+                }
+
                 let dy = zy.abs_diff(y[0]);
                 let du = zu.abs_diff(cb[0]);
                 let dv = zv.abs_diff(cr[0]);
@@ -76,4 +85,46 @@ fn zenyuv_vs_zenwebp_scalar_limited_bt601() {
     assert!(max_y <= 2, "Y max diff {max_y} > 2");
     assert!(max_u <= 2, "U max diff {max_u} > 2");
     assert!(max_v <= 2, "V max diff {max_v} > 2");
+}
+
+#[test]
+fn production_420_is_byte_exact_across_dispatch_tiers_for_odd_and_strided_images() {
+    use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+    use zenwebp::__test_helpers::convert_image_yuv_rgb_fast;
+
+    for (width, height) in [(1u16, 1u16), (3, 5), (17, 3), (33, 17), (64, 7), (65, 19)] {
+        let stride = usize::from(width) + 5;
+        let mut rgb = vec![0xe1; stride * usize::from(height) * 3];
+        let mut seed = 0x1234_5678u32;
+        for row in rgb.chunks_exact_mut(stride * 3) {
+            for code in &mut row[..usize::from(width) * 3] {
+                seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                *code = (seed >> 24) as u8;
+            }
+        }
+        for exact in [true, false] {
+            let baseline = convert_image_yuv_rgb_fast(&rgb, width, height, stride, exact);
+            let report = for_each_token_permutation(CompileTimePolicy::Fail, |permutation| {
+                let actual = convert_image_yuv_rgb_fast(&rgb, width, height, stride, exact);
+                for (name, actual, expected) in [
+                    ("Y", &actual.0, &baseline.0),
+                    ("U", &actual.1, &baseline.1),
+                    ("V", &actual.2, &baseline.2),
+                ] {
+                    assert_eq!(actual.len(), expected.len());
+                    assert!(
+                        actual == expected,
+                        "{name} {width}x{height} (strict={exact}, disabled {:?}): first differing code {:?}",
+                        permutation.disabled,
+                        actual
+                            .iter()
+                            .zip(expected)
+                            .enumerate()
+                            .find(|(_, (a, b))| a != b)
+                    );
+                }
+            });
+            assert!(report.permutations_run > 0);
+        }
+    }
 }

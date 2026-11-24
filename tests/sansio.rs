@@ -58,7 +58,10 @@ fn assert_parity(data: &[u8]) {
             assert!(sink.finished());
         }
         (Err(_), Err(zencodec_io::DriveError::Step(StepError::Codec(_)))) => {}
-        (expected, got) => panic!("one-shot/incremental outcome mismatch: {expected:?} / {got:?}"),
+        (expected, got) => panic!(
+            "one-shot/incremental outcome mismatch at {} bytes: {expected:?} / {got:?}",
+            data.len()
+        ),
     }
 }
 

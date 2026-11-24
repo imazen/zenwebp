@@ -5,6 +5,14 @@ earlier history lives in git log and LOG.md.)
 
 ## [Unreleased]
 
+- Use zenpixels 0.5 and zencodec 0.3 for the shared WebP adapter.
+  Honor orientation hints on composited animation frames and retain the ICC
+  origin and source frame durations in all delivery forms.
+- Keep rendered RGB ICC bytes verbatim through lossless still and animation
+  encoding. PQ without an authored profile needs the `cms` ICC database.
+  Scene HLG needs a rendering-qualified ICC profile. Run `just color-contract-check`
+  to exercise both isolated feature configurations.
+
 - Remove VP8L predictor SIMD call shims on x86 and reduce Wasm decoder code
   duplication in loop-filter edges and chroma row loads/stores.
 

@@ -107,11 +107,7 @@ impl From<DecodeError> for At<zencodec::CodecError> {
     }
 }
 
-/// Bridge a decode-sink error into the envelope. [`copy_decode_to_sink`] wants a
-/// `fn(SinkError) -> J::Error` pointer, so this is a named function rather than a
-/// closure.
-///
-/// [`copy_decode_to_sink`]: zencodec::helpers::copy_decode_to_sink
+/// Bridge a decode-sink error into the same envelope used by native decode.
 fn wrap_sink_to_codec(e: SinkError) -> At<zencodec::CodecError> {
     zencodec::CodecError::of(at!(DecodeError::InvalidParameter(alloc::format!("{e}"))))
 }
@@ -884,26 +880,6 @@ pub struct WebpEncoder {
 }
 
 impl WebpEncoder {
-    fn retain_input_color(&mut self, spec: &ImageSpec) -> Result<(), At<EncodeError>> {
-        if self.icc.is_none() && self.cicp.is_none() {
-            self.icc = active_icc(&spec.color).cloned();
-            self.cicp = cicp_for_encode(&spec.color);
-            if self.icc.is_none() && self.cicp.is_none() {
-                return Err(at!(EncodeError::IccSynthesisUnavailable(
-                    "input color requires an ICC profile or an expressible CICP".into()
-                )));
-            }
-        }
-        // Float input is stored as 8-bit sRGB by pixels_to_webp_input.
-        if spec.layout.sample == SampleType::F32
-            && let Some(cicp) = self.cicp.as_mut()
-            && cicp.transfer_characteristics == 8
-        {
-            cicp.transfer_characteristics = 13;
-        }
-        Ok(())
-    }
-
     fn do_encode(
         self,
         pixels: &[u8],
@@ -911,6 +887,7 @@ impl WebpEncoder {
         w: u32,
         h: u32,
         stride_pixels: usize,
+        spec: &ImageSpec,
     ) -> Result<EncodeOutput, At<EncodeError>> {
         self.limits
             .check_dimensions(w, h)
@@ -940,7 +917,13 @@ impl WebpEncoder {
         if let Some(pulse) = pulse {
             req = req.with_pulse(pulse);
         }
-        let icc_holder = resolve_webp_icc(self.icc.as_ref(), self.cicp, self.color_policy, layout)?;
+        let icc_holder = resolve_webp_icc(
+            spec,
+            self.icc.as_ref(),
+            self.cicp,
+            self.color_policy,
+            layout,
+        )?;
         {
             let icc_bytes = icc_holder.as_deref();
             let mut meta = crate::ImageMetadata::new();
@@ -1098,7 +1081,7 @@ impl zencodec::encode::Encoder for WebpEncoder {
         }
     }
 
-    fn encode(mut self, pixels: PixelView<'_>) -> Result<EncodeOutput, At<zencodec::CodecError>> {
+    fn encode(self, pixels: PixelView<'_>) -> Result<EncodeOutput, At<zencodec::CodecError>> {
         if self.declaration.is_some() || self.stream.is_some() {
             return Err(zencodec::CodecError::of(at!(
                 EncodeError::InvalidBufferSize("one-shot encode after row encoding started".into())
@@ -1106,9 +1089,7 @@ impl zencodec::encode::Encoder for WebpEncoder {
         }
         let (buf, layout, w, h, stride) =
             pixels_to_webp_input(&pixels).map_err(zencodec::CodecError::of)?;
-        self.retain_input_color(pixels.spec())
-            .map_err(zencodec::CodecError::of)?;
-        self.do_encode(&buf, layout, w, h, stride)
+        self.do_encode(&buf, layout, w, h, stride, pixels.spec())
             .map_err(zencodec::CodecError::of)
     }
 
@@ -1258,10 +1239,15 @@ impl zencodec::encode::Encoder for WebpEncoder {
                         EncodeError::InvalidBufferSize("incomplete declared canvas".into())
                     )));
                 }
-                self.retain_input_color(&descriptor)
-                    .map_err(zencodec::CodecError::of)?;
-                self.do_encode(&pixels, layout, width, total_rows, width as usize)
-                    .map_err(zencodec::CodecError::of)
+                self.do_encode(
+                    &pixels,
+                    layout,
+                    width,
+                    total_rows,
+                    width as usize,
+                    &descriptor,
+                )
+                .map_err(zencodec::CodecError::of)
             }
         }
     }
@@ -1323,17 +1309,13 @@ impl WebpAnimationFrameEncoder {
                 ..AnimationConfig::default()
             };
             let mut enc = AnimationEncoder::new(cw, ch, config).map_err_at(mux_to_encode_err)?;
-            let icc = self
-                .icc
-                .as_ref()
-                .or_else(|| active_icc(&pixels.spec().color));
-            let cicp = self.cicp.or_else(|| cicp_for_encode(&pixels.spec().color));
-            if icc.is_none() && cicp.is_none() {
-                return Err(at!(EncodeError::IccSynthesisUnavailable(
-                    "animation color requires an ICC profile or known CICP".into()
-                )));
-            }
-            if let Some(icc) = resolve_webp_icc(icc, cicp, self.color_policy, layout)? {
+            if let Some(icc) = resolve_webp_icc(
+                pixels.spec(),
+                self.icc.as_ref(),
+                self.cicp,
+                self.color_policy,
+                layout,
+            )? {
                 enc.icc_profile(icc.into_owned());
             }
             if let Some(exif) = &self.exif {
@@ -2177,7 +2159,9 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
             desc.layout,
             &info.source_color,
             None,
-        );
+        )
+        .map_err(decode_color_error)
+        .map_err(zencodec::CodecError::of)?;
         desc = retained_decode_spec(desc, &self.apply_policy_to_info(info));
         // Report the post-orientation output geometry + the transform the
         // decoder will apply. `Preserve` applies nothing (output = stored dims);
@@ -2346,14 +2330,17 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
             },
             &base_info.source_color,
             None,
-        );
+        )
+        .map_err(decode_color_error)
+        .map_err(zencodec::CodecError::of)?;
         let base_info = self.apply_policy_to_info(base_info);
         let mut frame_spec = retained_decode_spec(source_desc, &base_info);
         if frame_spec.layout == SampleLayout::RGBA8 && preferred.contains(&ImageSpec::bgra8_srgb())
         {
             frame_spec.layout = SampleLayout::BGRA8;
         }
-        let shared_info = Arc::new(base_info);
+        let orientation = resolve_orientation(self.orientation, base_info.orientation);
+        let shared_info = Arc::new(report_probe_for_hint(base_info, self.orientation));
         drop(probe_anim);
 
         // Build the self-referential struct: owned data + borrowing AnimationDecoder.
@@ -2389,9 +2376,10 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
                     failed: false,
                     frame_buf,
                     alloc_pref,
-                    has_alpha,
-                    canvas_width,
-                    canvas_height,
+                    stored_width: canvas_width,
+                    stored_height: canvas_height,
+                    orientation,
+                    origin: shared_info.source_color.color_origin(),
                     current_duration_ms: 0,
                     frame_spec,
                     next_frame_index: 0,
@@ -2565,7 +2553,8 @@ impl WebpDecoder<'_> {
             buf.spec().layout,
             &info.source_color,
             None,
-        );
+        )
+        .map_err(decode_color_error)?;
         let info = self.apply_policy_to_info(info);
         let descriptor = retained_decode_spec(descriptor, &info);
         let buf = buf
@@ -2629,7 +2618,8 @@ impl WebpDecoder<'_> {
             buf.spec().layout,
             &info.source_color,
             None,
-        );
+        )
+        .map_err(decode_color_error)?;
         let info = self.apply_policy_to_info(info);
         let descriptor = retained_decode_spec(descriptor, &info);
         let buf = buf
@@ -2642,6 +2632,17 @@ impl WebpDecoder<'_> {
             output = output.with_source_encoding_details(probe);
         }
         Ok(output)
+    }
+}
+
+fn decode_color_error(error: At<zenpixels::ColorError>) -> At<DecodeError> {
+    at!(DecodeError::InvalidParameter(alloc::format!("{error}")))
+}
+
+fn decode_orientation_error(error: At<zenpixels_convert::ConvertError>) -> At<DecodeError> {
+    match error.error() {
+        zenpixels_convert::ConvertError::AllocationFailed => at!(DecodeError::MemoryLimitExceeded),
+        _ => at!(DecodeError::InvalidParameter(alloc::format!("{error}"))),
     }
 }
 
@@ -2691,10 +2692,10 @@ fn negotiate_format(
     Ok(pixels)
 }
 
-impl zencodec::decode::Decode for WebpDecoder<'_> {
-    type Error = At<zencodec::CodecError>;
-
-    fn decode(self) -> Result<DecodeOutput, At<zencodec::CodecError>> {
+impl WebpDecoder<'_> {
+    fn decode_with_orientation(
+        self,
+    ) -> Result<(DecodeOutput, Orientation), At<zencodec::CodecError>> {
         let output = self
             .do_decode(&self.data)
             .map_err(zencodec::CodecError::of)?;
@@ -2713,6 +2714,35 @@ impl zencodec::decode::Decode for WebpDecoder<'_> {
         // pixels and the info reports display dims + `Identity`.
         apply_orientation_to_output(output, self.orientation).map_err(zencodec::CodecError::of)
     }
+}
+
+impl zencodec::decode::Decode for WebpDecoder<'_> {
+    type Error = At<zencodec::CodecError>;
+
+    fn decode(self) -> Result<DecodeOutput, Self::Error> {
+        self.decode_with_orientation().map(|(output, _)| output)
+    }
+}
+
+fn push_full_image_to_sink<'a>(
+    job: WebpDecodeJob,
+    data: Cow<'a, [u8]>,
+    sink: &mut dyn zencodec::decode::DecodeRowSink,
+    preferred: &[ImageSpec],
+) -> Result<OutputInfo, At<zencodec::CodecError>> {
+    use zencodec::decode::DecodeJob;
+
+    // DecodeRequest can recover a VP8 still when the strict metadata probe
+    // rejects the container. Treat the completed decode as authoritative.
+    let (output, orientation) = job.decoder(data, preferred)?.decode_with_orientation()?;
+    let view = output.pixels();
+    let (width, height, spec) = (view.width(), view.rows(), view.spec().clone());
+    sink.begin(width, height, spec.clone())
+        .map_err(wrap_sink_to_codec)?;
+    zencodec::helpers::copy_rows_to_sink(sink, zencodec::decode::BatchMeta::final_rows(0), &view)
+        .map_err(wrap_sink_to_codec)?;
+    sink.finish().map_err(wrap_sink_to_codec)?;
+    Ok(OutputInfo::full_decode(width, height, spec).with_orientation_applied(orientation))
 }
 
 // ── push_decoder dispatch ─────────────────────────────────────────────────
@@ -2739,8 +2769,7 @@ fn is_lossy_streaming_candidate(data: &[u8]) -> bool {
 /// Native row-streaming `push_decoder` for lossy VP8.
 ///
 /// Feeds each macroblock-row strip directly to the sink, skipping the
-/// full-frame RGB/RGBA allocation that [`zencodec::helpers::copy_decode_to_sink`]
-/// requires. For lossless (VP8L), animations, or lossy streams where the
+/// full-frame RGB/RGBA allocation of the fallback. For lossless (VP8L), animations, or lossy streams where the
 /// internal streaming decoder cannot be constructed, transparently falls
 /// back to the full-decode helper so the caller still gets a correct image.
 fn push_decoder_impl<'a>(
@@ -2753,13 +2782,7 @@ fn push_decoder_impl<'a>(
     // or anything the container scanner can't classify, fall back to the
     // helper-driven full decode — it handles all the same cases `decode()` does.
     if !is_lossy_streaming_candidate(&data) {
-        return zencodec::helpers::copy_decode_to_sink(
-            job,
-            data,
-            sink,
-            preferred,
-            wrap_sink_to_codec,
-        );
+        return push_full_image_to_sink(job, data, sink, preferred);
     }
 
     // Dimension limit enforcement (matches `WebpDecoder::do_decode`).
@@ -2785,26 +2808,16 @@ fn push_decoder_impl<'a>(
     let mut stream = match job.streaming_decoder(Cow::Borrowed(&data), preferred) {
         Ok(s) => s,
         Err(_) => {
-            return zencodec::helpers::copy_decode_to_sink(
-                fallback_job,
-                data,
-                sink,
-                preferred,
-                wrap_sink_to_codec,
-            );
+            return push_full_image_to_sink(fallback_job, data, sink, preferred);
         }
     };
 
     let (width, height) = stream.dimensions();
     let descriptor = stream.descriptor().clone();
-    let bpp = descriptor.layout.bytes_per_pixel();
-
     // Tell the sink what's coming. After this, any error path must not
     // call `sink.finish()`.
     sink.begin(width, height, descriptor.clone())
         .map_err(wrap_sink_to_codec)?;
-
-    let row_bytes = width as usize * bpp;
 
     while let Some((y_start, pixel_slice)) = stream.next_batch()? {
         // Cooperative cancellation between strips.
@@ -2814,23 +2827,12 @@ fn push_decoder_impl<'a>(
                 .map_err(|e| zencodec::CodecError::of(at!(DecodeError::from(e))))?;
         }
 
-        let num_rows: u32 = pixel_slice.rows();
-        if num_rows == 0 {
-            continue;
-        }
-
-        let mut dst = sink
-            .provide_next_buffer(y_start, num_rows, width, descriptor.clone())
-            .map_err(wrap_sink_to_codec)?;
-
-        for row in 0..num_rows {
-            let src = pixel_slice.row(row);
-            let dst_row = dst.row_mut(row);
-            // PixelView rows are width*bpp; sink buffers may be wider
-            // (stride padding). Copy only the pixel bytes.
-            dst_row[..row_bytes].copy_from_slice(&src[..row_bytes]);
-        }
-        drop(dst);
+        zencodec::helpers::copy_rows_to_sink(
+            sink,
+            zencodec::decode::BatchMeta::final_rows(y_start),
+            &pixel_slice,
+        )
+        .map_err(wrap_sink_to_codec)?;
     }
 
     sink.finish().map_err(wrap_sink_to_codec)?;
@@ -2951,6 +2953,7 @@ struct Vp8StreamingDecoder {
     descriptor: ImageSpec,
     /// Image info for the trait.
     info: Arc<ImageInfo>,
+    origin: zenpixels::ColorOrigin,
     /// Decoded alpha plane (if VP8X with alpha). Applied per-strip.
     alpha_plane: Option<Vec<u8>>,
 }
@@ -3013,7 +3016,8 @@ impl Vp8StreamingDecoder {
             descriptor.layout,
             &info.source_color,
             None,
-        );
+        )
+        .map_err(decode_color_error)?;
 
         // Max strip rows: last MB row may emit extra_y_rows + 16 rows.
         // For the first row of a single-row image, it's 16.
@@ -3037,6 +3041,7 @@ impl Vp8StreamingDecoder {
             height: u32::from(height),
             bpp: effective_bpp,
             descriptor,
+            origin: info.source_color.color_origin(),
             info: Arc::new(info),
             alpha_plane,
         })
@@ -3106,7 +3111,7 @@ impl zencodec::decode::StreamingDecode for Vp8StreamingDecoder {
             )))
         })?;
 
-        Ok(Some((y_start as u32, slice)))
+        Ok(Some((y_start as u32, slice.with_origin(&self.origin))))
     }
 
     fn info(&self) -> &ImageInfo {
@@ -3254,11 +3259,10 @@ struct NativeAnimationFrameDecoder {
     frame_buf: Vec<u8>,
     /// Allocation policy for re-creating `frame_buf` after it was taken.
     alloc_pref: crate::decoder::alloc_util::AllocPreference,
-    /// Whether the animation has alpha (RGBA vs RGB output).
-    has_alpha: bool,
-    /// Canvas dimensions.
-    canvas_width: u32,
-    canvas_height: u32,
+    stored_width: u32,
+    stored_height: u32,
+    orientation: Orientation,
+    origin: zenpixels::ColorOrigin,
     /// Duration of the most recently decoded frame.
     current_duration_ms: u32,
     /// Interpretation shared by every composited frame.
@@ -3311,7 +3315,9 @@ impl NativeAnimationFrameDecoder {
         pulse: &dyn how_far::Pulse,
     ) -> Result<bool, At<DecodeError>> {
         // Re-allocate if frame_buf was taken by render_next_frame_owned.
-        let expected_size = self.stride() * self.canvas_height as usize;
+        let expected_size = self.info.width as usize
+            * self.info.height as usize
+            * self.frame_spec.layout.bytes_per_pixel();
         if self.frame_buf.len() < expected_size {
             crate::decoder::alloc_util::try_resize_zeroed(
                 self.alloc_pref,
@@ -3323,21 +3329,39 @@ impl NativeAnimationFrameDecoder {
         }
 
         let frame_buf = &mut self.frame_buf;
-        let result = self
-            .decoder
-            .with_dependent_mut(|_, anim| {
-                match anim.decode_next_with_pulse(pulse) {
-                    Ok(Some(info)) => {
-                        let data = anim.current_frame_data();
-                        // frame_buf is pre-allocated to canvas size; this is a memcpy, no alloc.
-                        frame_buf[..data.len()].copy_from_slice(data);
-                        Ok(Some(info.duration_ms))
-                    }
-                    Ok(None) => Ok(None),
-                    Err(e) => Err(e),
+        let result = self.decoder.with_dependent_mut(|_, anim| {
+            let Some(frame) = anim.decode_next_with_pulse(pulse).at()? else {
+                return Ok(None);
+            };
+            let data = anim.current_frame_data();
+            if self.orientation.is_identity() {
+                frame_buf.copy_from_slice(data);
+            } else {
+                let mut spec = self.frame_spec.clone();
+                if spec.layout == SampleLayout::BGRA8 {
+                    spec.layout = SampleLayout::RGBA8;
                 }
-            })
-            .at()?;
+                let src = PixelView::from_packed(
+                    data,
+                    self.stored_width,
+                    self.stored_height,
+                    spec.clone(),
+                )
+                .map_err(decode_buffer_error)?;
+                let stride = self.info.width as usize * spec.layout.bytes_per_pixel();
+                let mut dst = zenpixels::PixelViewMut::new(
+                    frame_buf,
+                    self.info.width,
+                    self.info.height,
+                    stride,
+                    spec,
+                )
+                .map_err(decode_buffer_error)?;
+                zenpixels_convert::orient::apply_orientation_into(&src, self.orientation, &mut dst)
+                    .map_err(decode_orientation_error)?;
+            }
+            Ok::<_, At<DecodeError>>(Some(frame.duration_ms))
+        })?;
 
         match result {
             Some(duration_ms) => {
@@ -3402,12 +3426,6 @@ impl NativeAnimationFrameDecoder {
         }
         result
     }
-
-    /// Byte stride for the current frame format.
-    fn stride(&self) -> usize {
-        let bpp: usize = if self.has_alpha { 4 } else { 3 };
-        self.canvas_width as usize * bpp
-    }
 }
 
 impl zencodec::decode::AnimationFrameDecoder for NativeAnimationFrameDecoder {
@@ -3437,20 +3455,15 @@ impl zencodec::decode::AnimationFrameDecoder for NativeAnimationFrameDecoder {
             return Ok(None);
         };
 
-        // Zero-alloc: create PixelView directly from the reusable frame_buf.
-        let stride = self.stride();
-        let slice = PixelView::new(
+        let slice = PixelView::from_packed(
             &self.frame_buf,
-            self.canvas_width,
-            self.canvas_height,
-            stride,
+            self.info.width,
+            self.info.height,
             self.frame_spec.clone(),
         )
-        .map_err(|_| {
-            zencodec::CodecError::of(at!(DecodeError::InvalidParameter(
-                "frame buffer mismatch".into(),
-            )))
-        })?;
+        .map_err(decode_buffer_error)
+        .map_err(zencodec::CodecError::of)?
+        .with_origin(&self.origin);
         Ok(Some(AnimationFrame::new(
             slice,
             self.current_duration_ms,
@@ -3471,8 +3484,8 @@ impl zencodec::decode::AnimationFrameDecoder for NativeAnimationFrameDecoder {
         let data = core::mem::take(&mut self.frame_buf);
         let buf = PixelBuf::from_bytes(
             data,
-            self.canvas_width,
-            self.canvas_height,
+            self.info.width,
+            self.info.height,
             self.frame_spec.clone(),
         )
         .map_err(|_| {
@@ -3480,7 +3493,7 @@ impl zencodec::decode::AnimationFrameDecoder for NativeAnimationFrameDecoder {
                 "frame size mismatch".into()
             )))
         })?;
-        let buf = buf.with_origin(self.info.source_color.color_origin());
+        let buf = buf.with_origin(self.origin.clone());
         Ok(Some(OwnedAnimationFrame::new(
             buf,
             self.current_duration_ms,
@@ -3493,7 +3506,9 @@ impl zencodec::decode::AnimationFrameDecoder for NativeAnimationFrameDecoder {
         pulse: Option<&dyn zencodec::Pulse>,
         sink: &mut dyn zencodec::decode::DecodeRowSink,
     ) -> Result<Option<OutputInfo>, Self::Error> {
-        zencodec::helpers::copy_frame_to_sink(self, pulse, sink)
+        let orientation = self.orientation;
+        Ok(zencodec::helpers::copy_frame_to_sink(self, pulse, sink)?
+            .map(|info| info.with_orientation_applied(orientation)))
     }
 }
 
@@ -3585,7 +3600,7 @@ fn resolve_orientation(hint: OrientationHint, intrinsic: Orientation) -> Orienta
 /// [`to_image_info`] already set.
 ///
 /// Otherwise the resolved orientation (see [`resolve_orientation`]) is physically
-/// applied to the pixels via [`zenpixels_convert::orient::apply_orientation`],
+/// applied to the pixels via [`zenpixels_convert::orient::orient_buf`],
 /// and the reported `ImageInfo` is rewritten to the baked buffer's dimensions
 /// with [`Orientation::Identity`] (the pixels are final — no orientation remains
 /// to apply). The intrinsic EXIF orientation is read from the `ImageInfo` the
@@ -3593,29 +3608,19 @@ fn resolve_orientation(hint: OrientationHint, intrinsic: Orientation) -> Orienta
 fn apply_orientation_to_output(
     output: DecodeOutput,
     hint: OrientationHint,
-) -> Result<DecodeOutput, At<DecodeError>> {
+) -> Result<(DecodeOutput, Orientation), At<DecodeError>> {
     if !hint.bakes() {
-        return Ok(output);
+        return Ok((output, Orientation::Identity));
     }
     let (buf, mut details) = output.into_parts();
     let resolved = resolve_orientation(hint, details.info.orientation);
-    let baked = if resolved.is_identity() {
-        buf
-    } else {
-        zenpixels_convert::orient::apply_orientation(&buf.as_view(), resolved)
-            .map_err(|e| match e.error() {
-                zenpixels_convert::ConvertError::AllocationFailed => {
-                    at!(DecodeError::MemoryLimitExceeded)
-                }
-                _ => at!(DecodeError::InvalidParameter(alloc::format!("{e}"))),
-            })?
-            .with_origin(buf.origin().clone())
-    };
+    let baked =
+        zenpixels_convert::orient::orient_buf(buf, resolved).map_err(decode_orientation_error)?;
 
     details.info.width = baked.width();
     details.info.height = baked.height();
     details.info = details.info.with_orientation(Orientation::Identity);
-    Ok(DecodeOutput::from_parts(baked, details))
+    Ok((DecodeOutput::from_parts(baked, details), resolved))
 }
 
 /// Rewrite a probe [`ImageInfo`] (stored dims + intrinsic EXIF tag, as produced
@@ -3683,20 +3688,6 @@ fn active_icc(color: &ColorSpace) -> Option<&Arc<[u8]>> {
     }
 }
 
-fn cicp_for_encode(color: &ColorSpace) -> Option<zencodec::Cicp> {
-    match color {
-        ColorSpace::Gray {
-            transfer, range, ..
-        } => Some(zencodec::Cicp::new(
-            1,
-            transfer.to_cicp()?,
-            0,
-            *range == SignalRange::Full,
-        )),
-        _ => color.to_cicp(),
-    }
-}
-
 fn encode_buffer_error(error: At<zenpixels::BufferError>) -> At<EncodeError> {
     match error.error() {
         zenpixels::BufferError::AllocationFailed => at!(EncodeError::LimitExceeded(
@@ -3708,48 +3699,115 @@ fn encode_buffer_error(error: At<zenpixels::BufferError>) -> At<EncodeError> {
 }
 
 /// Shared still/animation lowering: WebP has ICC as its sole color carrier.
-fn resolve_webp_icc(
-    icc: Option<&Arc<[u8]>>,
-    cicp: Option<zencodec::Cicp>,
+fn resolve_webp_icc<'a>(
+    spec: &'a ImageSpec,
+    authored_icc: Option<&'a Arc<[u8]>>,
+    mut cicp: Option<zencodec::Cicp>,
     policy: zencodec::ColorEmitPolicy,
     layout: PixelLayout,
-) -> Result<Option<alloc::borrow::Cow<'_, [u8]>>, At<EncodeError>> {
-    // WebP expands luma inputs to RGB/RGBA; its ICC describes those output
-    // channels, rather than the caller's one/two-channel input storage.
-    let channels = match layout {
-        PixelLayout::L8 => 3,
-        PixelLayout::La8 => 4,
-        PixelLayout::Rgb8 | PixelLayout::Bgr8 | PixelLayout::Yuv420 => 3,
-        PixelLayout::Rgba8 | PixelLayout::Bgra8 | PixelLayout::Argb8 => 4,
+) -> Result<Option<Cow<'a, [u8]>>, At<EncodeError>> {
+    // Gray expands to RGB, RGBX loses its padding and the native float
+    // adapter writes sRGB-transfer codes. Plan against the stored samples.
+    let alpha = match layout {
+        PixelLayout::La8 | PixelLayout::Rgba8 | PixelLayout::Bgra8 | PixelLayout::Argb8 => {
+            AlphaMode::Straight
+        }
+        _ => AlphaMode::None,
     };
-    let mut source = zencodec::SourceColor::default().with_channel_count(channels);
-    if let Some(cicp) = cicp {
-        source = source
-            .with_cicp(cicp)
-            .with_color_authority(zencodec::ColorAuthority::Cicp);
+    let active = active_icc(&spec.color);
+    if let (Some(active), Some(authored)) = (active, authored_icc)
+        && active != authored
+    {
+        return Err(at!(EncodeError::IccSynthesisUnavailable(
+            "authored ICC differs from the current RGB ICC".into()
+        )));
     }
+    let mut source = zencodec::SourceColor::default().with_channel_count(3);
+    let mut current = match &spec.color {
+        ColorSpace::Gray {
+            transfer,
+            range,
+            white,
+            ..
+        } => ColorSpace::Rgb {
+            primaries: zenpixels::Primaries::Bt709,
+            transfer: *transfer,
+            range: *range,
+            alpha,
+            white: *white,
+        },
+        color => color.clone().with_alpha(alpha),
+    };
+    if spec.layout.sample == SampleType::F32 {
+        current = current.with_transfer(Transfer::Srgb);
+        if let Some(c) = cicp.as_mut()
+            && c.transfer_characteristics == 8
+        {
+            c.transfer_characteristics = 13;
+        }
+    }
+
+    let icc = authored_icc.or(active);
     if let Some(icc) = icc {
-        use zenpixels::IccColorSpace;
-        if IccColorSpace::from_icc(icc).is_some_and(|space| space != IccColorSpace::Rgb) {
+        if zenpixels::IccColorSpace::from_icc(icc) != Some(zenpixels::IccColorSpace::Rgb) {
             return Err(at!(EncodeError::IccSynthesisUnavailable(
                 "WebP output requires an RGB ICC profile".into()
             )));
         }
+        // The legacy metadata entry point also permits an explicit ICC
+        // declaration for RGB byte views made with the default spec.
+        current = ColorSpace::Icc {
+            profile: icc.clone(),
+            channels: 3,
+            alpha,
+            intent: zenpixels::RenderingIntent::RelativeColorimetric,
+        };
         source = source
             .with_icc_profile(icc.clone())
             .with_color_authority(zencodec::ColorAuthority::Icc);
+    } else if let Some(c) = cicp {
+        source = source
+            .with_cicp(c)
+            .with_color_authority(zencodec::ColorAuthority::Cicp);
+        if current == ColorSpace::SRGB.with_alpha(alpha) {
+            if c.matrix_coefficients != 0 || !c.full_range {
+                return Err(at!(EncodeError::IccSynthesisUnavailable(
+                    "CICP must describe full-range RGB codes for WebP ICC export".into()
+                )));
+            }
+            current = c.to_color_space(alpha).unwrap_or_else(|_| {
+                ColorSpace::SRGB
+                    .with_alpha(alpha)
+                    .with_primaries(zenpixels::Primaries::Unknown)
+                    .with_transfer(Transfer::Unknown)
+            });
+        }
     }
-    let plan = zencodec::resolve_color_emit(&source, &ENCODE_CAPABILITIES, policy);
+
+    let plan = zencodec::resolve_color_emit(&source, &current, &ENCODE_CAPABILITIES, policy)
+        .map_err(|error| {
+            let message = if matches!(
+                current,
+                ColorSpace::Rgb {
+                    transfer: Transfer::Hlg(_),
+                    ..
+                }
+            ) {
+                "HLG needs an explicit rendering-qualified RGB ICC profile".into()
+            } else {
+                alloc::format!("{error}")
+            };
+            at!(EncodeError::IccSynthesisUnavailable(message))
+        })?;
     match plan.icc {
         zencodec::IccDisposition::KeepSource => {
-            Ok(icc.map(|v| alloc::borrow::Cow::Borrowed(v.as_ref())))
+            Ok(icc.map(|profile| Cow::Borrowed(profile.as_ref())))
         }
         zencodec::IccDisposition::Drop => Ok(None),
         zencodec::IccDisposition::SynthesizeFrom(cicp) => {
             use zenpixels_convert::icc_profiles::SynthesizedIcc;
             match SynthesizedIcc::for_cicp(cicp) {
                 SynthesizedIcc::Profile(bytes) => Ok(Some(bytes)),
-                SynthesizedIcc::NotNeeded => Ok(None),
                 outcome => Err(at!(EncodeError::IccSynthesisUnavailable(alloc::format!(
                     "CICP primaries {} / transfer {} ({outcome:?}); {}",
                     cicp.color_primaries,
@@ -3763,6 +3821,11 @@ fn resolve_webp_icc(
                     }
                 )))),
             }
+        }
+        zencodec::IccDisposition::SynthesizeGrayFrom(_) => {
+            Err(at!(EncodeError::IccSynthesisUnavailable(
+                "gray inputs expand to RGB before WebP ICC export".into()
+            )))
         }
         _ => Err(at!(EncodeError::IccSynthesisUnavailable(
             "unsupported ICC emission disposition".into()
@@ -5114,8 +5177,10 @@ mod tests {
 
     #[test]
     fn gray_cicp_resolves_an_rgb_profile_for_webp_output() {
+        let spec = ImageSpec::gray8_srgb();
         for layout in [PixelLayout::L8, PixelLayout::La8] {
             let profile = resolve_webp_icc(
+                &spec,
                 None,
                 Some(Cicp::DISPLAY_P3),
                 zencodec::ColorEmitPolicy::Balanced,
@@ -5181,87 +5246,6 @@ mod tests {
                 assert_eq!(&*independent, expected.as_slice(), "alpha={alpha}");
             }
         }
-    }
-
-    /// Encode an RGB8 image whose `Metadata` carries ONLY a CICP (Display P3)
-    /// and no ICC. WebP has no CICP carrier, so before the fix this produced an
-    /// untagged (sRGB-assumed) WebP — silently dropping the wide gamut. The
-    /// resolver must now synthesize the bundled Display P3 ICC and embed it in
-    /// the ICCP chunk.
-    #[test]
-    #[allow(deprecated)] // Intentional legacy metadata-setter coverage.
-    fn cicp_only_source_synthesizes_icc() {
-        let buf = make_rgb8_pixels(32, 32);
-        let meta = Metadata::none().with_cicp(Cicp::DISPLAY_P3);
-        let out = WebpEncoderConfig::lossless()
-            .job()
-            .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact)
-            .encoder()
-            .unwrap()
-            .encode(buf.as_view())
-            .unwrap();
-
-        let info = crate::ImageInfo::from_webp(out.data()).unwrap();
-        let embedded = info
-            .icc_profile
-            .as_deref()
-            .expect("CICP-only Display P3 source must produce an embedded (synthesized) ICC");
-        // What the profile describes, not its bytes: zenpixels 0.2.17 serves
-        // the exact, cicp-tagged profile instead of the curated
-        // `DISPLAY_P3_V4` (zenpixels#86/#87); both describe P3 + sRGB curve.
-        let id =
-            zenpixels::icc::IccIdentification::from_icc(embedded).expect("a recognised profile");
-        let cicp = id.to_cicp().expect("CICP for the profile");
-        assert_eq!(
-            (cicp.color_primaries, cicp.transfer_characteristics),
-            (12, 13),
-            "embedded ICC must describe Display P3 with the sRGB curve"
-        );
-    }
-
-    /// The test graph includes zenpng, which enables the ICC database even
-    /// when zenwebp's own cms flag is off. Exercise that feature-unified path
-    /// here. An isolated no-database consumer refuses CICP-only PQ.
-    #[cfg(not(feature = "cms"))]
-    #[test]
-    #[allow(deprecated)] // Intentional legacy metadata-setter coverage.
-    fn cicp_pq_without_cms_embeds_bundled_icc() {
-        let buf = make_rgb8_pixels(32, 32);
-        let meta = Metadata::none().with_cicp(Cicp::BT2100_PQ);
-        let out = WebpEncoderConfig::lossless()
-            .job()
-            .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact)
-            .encoder()
-            .unwrap()
-            .encode(buf.as_view())
-            .expect("PQ CICP in the feature-unified test graph must synthesize an ICC");
-        let embedded = crate::ImageInfo::from_webp(out.data())
-            .unwrap()
-            .icc_profile
-            .expect("the feature-unified test graph must embed the bundled PQ ICC");
-        assert!(!embedded.is_empty());
-    }
-
-    /// With `cms`, the bundled database supplies the PQ ICC profile.
-    #[cfg(feature = "cms")]
-    #[test]
-    #[allow(deprecated)] // Intentional legacy metadata-setter coverage.
-    fn cicp_pq_with_cms_synthesizes_icc() {
-        let buf = make_rgb8_pixels(32, 32);
-        let meta = Metadata::none().with_cicp(Cicp::BT2100_PQ);
-        let out = WebpEncoderConfig::lossless()
-            .job()
-            .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact)
-            .encoder()
-            .unwrap()
-            .encode(buf.as_view())
-            .expect("PQ CICP with cms must synthesize an ICC and succeed");
-        let info = crate::ImageInfo::from_webp(out.data()).unwrap();
-        let embedded = info
-            .icc_profile
-            .as_deref()
-            .expect("cms build must embed a synthesized PQ ICC");
-        assert!(!embedded.is_empty());
     }
 
     /// A CICP-only sRGB source must NOT embed an ICC: sRGB is the universally

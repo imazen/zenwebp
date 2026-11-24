@@ -36,7 +36,7 @@ hashbrown = { version = "0.17.2", default-features = false, features = ["default
 thiserror = { version = "2.0.21", default-features = false }
 whereat = { version = "0.1.5", default-features = false }
 libm = "0.2.16"
-zencodec = ">=0.2.0, <0.3.0"
+zencodec = ">=0.3.0, <0.5.0"
 # zennode = { path = "../zennode/zennode", optional = true, default-features = false, features = ["derive"] }
 zenpixels = { version = ">=0.5.0, <0.6.0", default-features = false }
 # Used by the zencodec encode path to synthesize an ICC profile from a
@@ -98,10 +98,10 @@ zenanalyze = { version = "0.2.0", optional = true, features = ["api", "experimen
 [dev-dependencies]
 how-far-along = { version = "0.1.0", default-features = false, features = ["std"] }
 # The testkit's incremental drivers; the same checkout as the patched zencodec.
-zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
+zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "093211c276fbb1781bec1601d7cb6b0fb92f245a" }
 # Companion crate shipping the conformance checks (incl.
 # `check_decode_truncation_series`); the root patch keeps it on the codec's zencodec.
-zencodec-testkit = ">=0.2.0, <0.3.0"
+zencodec-testkit = ">=0.3.0, <0.5.0"
 # `testable_dispatch` lets benches/tier_isolation.rs disable the baseline
 # SIMD token (NEON on aarch64) so the scalar arm is real rather than a
 # second measurement of the SIMD path.
@@ -526,16 +526,16 @@ zenpixels-legacy = { package = "zenpixels", git = "https://github.com/imazen/zen
 zenpixels-convert-legacy = { package = "zenpixels-convert", git = "https://github.com/imazen/zenpixels", rev = "fa836abf72afe9826e866dc25712b7c800323962" }
 
 # Unreleased zenpixels 0.5 integration cohort. Repeat runtime pins in fuzz/.
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "42a0c5c83c5c418950eb528d92d57788f6700bcf" }
-zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "42a0c5c83c5c418950eb528d92d57788f6700bcf" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "e0dba0052a839ecfe17e4c911a3761e793605adf" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "e0dba0052a839ecfe17e4c911a3761e793605adf" }
 garb = { git = "https://github.com/imazen/garb", rev = "457ff8b9153e9d675a39dc098052b2ffeb6206fa" }
 linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "ae83f19426737635fee3dd16f228681019f52585" }
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
-zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
-zenmeta = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
-zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
-zenpng = { git = "https://github.com/imazen/zenpng", rev = "b6e759468691c8906b686a8d64732136f5a63518" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "093211c276fbb1781bec1601d7cb6b0fb92f245a" }
+zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "093211c276fbb1781bec1601d7cb6b0fb92f245a" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "093211c276fbb1781bec1601d7cb6b0fb92f245a" }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "093211c276fbb1781bec1601d7cb6b0fb92f245a" }
+zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "093211c276fbb1781bec1601d7cb6b0fb92f245a" }
+zenpng = { git = "https://github.com/imazen/zenpng", rev = "1dd8248fa6683d5c3e22eb946a97b1f93996371a" }
 
 # Wide-corpus decoder parity sweep vs libwebp (rgba/rgb/nofancy/yuv/anim,
 # tolerance 0) over existing .webp files plus libwebp- and zenwebp-encoded

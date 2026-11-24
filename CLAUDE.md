@@ -1066,6 +1066,18 @@ is essentially the current implementation.
 
 ## Known Bugs
 
+- zencodec 0.3 full-image sink fallback. The shared copy helper now requires
+  `output_info` before decoding. WebP's metadata probe refuses a truncated
+  VP8X fixture that the one-shot decoder can recover. Build sink completion
+  from actual one-shot output and the orientation applied, retaining bounded
+  rows and provenance. `tests/sansio.rs` keeps one-shot and incremental
+  admission and pixels in agreement.
+- Animation orientation and ICC provenance. Apply EXIF hints to each
+  composited display frame in the reusable delivery buffer. Preserve encoded
+  durations and copy the ICC origin through borrowed, owned and sink output.
+  The asymmetric EXIF 6 witness has a literal pixel permutation and uses
+  libwebp for stored frames and re-encoded EXIF and pixels.
+
 - Pixel API migration: native tests can enable `icc-db` through the PNG dev
   dependency even when zenwebp's `cms` flag is off. An isolated consumer
   refuses CICP-only PQ without the database and refuses HLG without a

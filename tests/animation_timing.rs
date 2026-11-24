@@ -105,6 +105,9 @@ fn cumulative_timestamp_overflow_rejects_before_acceptance() {
     assert!(decoder.render_next_frame_owned(None).unwrap().is_none());
 }
 
+#[path = "support/icc.rs"]
+mod icc;
+
 // Native timing, metadata and admission cases from PR105.
 mod native_contract {
     use std::borrow::Cow;
@@ -341,8 +344,9 @@ mod native_contract {
     #[test]
     #[allow(deprecated)] // Intentional legacy metadata-setter coverage.
     fn animation_retains_metadata_and_synthesizes_cicp_color_like_still_images() {
-        let pixels = pixels();
         let icc = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
+        let first = [12, 34, 56, 255].repeat(4);
+        let second = [210, 79, 18, 255].repeat(4);
         for explicit_icc in [false, true] {
             let mut metadata = zencodec::Metadata::none()
                 .with_exif(&b"Exif\0\0animation-exif"[..])
@@ -357,28 +361,34 @@ mod native_contract {
                 .with_metadata_policy(metadata, zencodec::MetadataPolicy::PreserveExact)
                 .animation_frame_encoder()
                 .unwrap();
-            encoder
-                .push_frame_timed(pixels.as_view(), FrameDuration::from_millis(10), None)
-                .unwrap();
+            let spec = ImageSpec::new(
+                zenpixels::SampleLayout::RGBA8,
+                zenpixels::ColorSpace::DISPLAY_P3_ALPHA,
+            );
+            for bytes in [&first, &second] {
+                let view = zenpixels::PixelView::from_packed(bytes, 2, 2, spec.clone()).unwrap();
+                encoder
+                    .push_frame_timed(view, FrameDuration::from_millis(10), None)
+                    .unwrap();
+            }
             let output = encoder.finish(None).unwrap();
             let demux = WebPDemuxer::new(output.data()).unwrap();
-            let expected_icc = if explicit_icc {
-                std::borrow::Cow::Borrowed(icc)
-            } else {
-                use zenpixels_convert::icc_profiles::SynthesizedIcc;
-                let SynthesizedIcc::Profile(profile) =
-                    SynthesizedIcc::for_cicp(zenpixels::Cicp::DISPLAY_P3)
-                else {
-                    panic!("Display P3 must have a synthesized ICC carrier");
-                };
-                assert_eq!(
-                    zenpixels::Cicp::from_icc(&profile),
-                    Some(zenpixels::Cicp::DISPLAY_P3),
-                    "the synthesized carrier must name the requested primaries and transfer"
-                );
-                profile
-            };
-            assert_eq!(demux.icc_profile(), Some(expected_icc.as_ref()));
+            assert!(demux.is_animated());
+            let embedded = demux.icc_profile().expect("ICC carrier");
+            super::icc::assert_p3(embedded, explicit_icc);
+            if explicit_icc {
+                assert_eq!(embedded, icc);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let frames = webpx::AnimationDecoder::new(output.data())
+                    .unwrap()
+                    .decode_all()
+                    .unwrap();
+                assert_eq!(frames.len(), 2);
+                assert_eq!(frames[0].data, first);
+                assert_eq!(frames[1].data, second);
+            }
             assert_eq!(demux.exif(), Some(&b"Exif\0\0animation-exif"[..]));
             assert_eq!(demux.xmp(), Some(&b"<x:xmpmeta>animation</x:xmpmeta>"[..]));
         }

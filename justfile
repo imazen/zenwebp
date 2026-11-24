@@ -320,8 +320,8 @@ sibling-cohort-check:
     #!/usr/bin/env bash
     set -euo pipefail
     cargo fmt --check
-    cargo tree --locked -i zenpixels
-    cargo tree --locked -i zencodec
+    cargo tree --locked -e normal -i zenpixels@0.5.0
+    cargo tree --locked -e normal -i zencodec@0.3.0
     features="$(just stable-features)"
     [[ -n "$features" ]]
     printf "Stable features: %s\n" "$features"
@@ -339,6 +339,12 @@ gray-output-color-check:
     cargo test --locked --lib gray_cicp
     cargo test --locked --lib cicp_
     cargo clippy --locked --lib -- -D warnings
+
+# Keep zenpng and its icc-db feature out of the downstream consumer graph.
+color-contract-check:
+    cargo test --locked --test color_profiles --test animation_timing --test orientation
+    cargo test --locked --manifest-path tools/color-contract/Cargo.toml
+    cargo test --locked --manifest-path tools/color-contract/Cargo.toml --features cms
 
 # Tests the production stride bridge against sample-aligned zenpixels views.
 byte-stride-check:
