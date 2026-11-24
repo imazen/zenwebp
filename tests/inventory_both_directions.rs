@@ -484,8 +484,8 @@ fn signature(d: &[u8]) -> String {
         Ok(o) => out.push_str(&format!(
             "D[{} {:?} px{} {}]",
             info_s(o.info()),
-            o.pixels().descriptor(),
-            h(&o.pixels().contiguous_bytes().into_owned()),
+            o.buffer().spec(),
+            h(&o.pixels().try_contiguous_bytes().unwrap()),
             wp(o.source_encoding_details())
         )),
         Err(_) => out.push_str("D[err]"),

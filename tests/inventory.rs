@@ -960,7 +960,7 @@ fn zc_pixels(data: &[u8]) -> Vec<u8> {
     let out = WebpDecoderConfig::new()
         .decode(data)
         .expect("zencodec decode");
-    out.pixels().contiguous_bytes().into_owned()
+    out.pixels().try_contiguous_bytes().unwrap().into_owned()
 }
 
 fn probe_details(info: &zencodec::ImageInfo) -> zenwebp::detect::WebPProbe {
