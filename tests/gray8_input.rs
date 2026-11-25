@@ -4,7 +4,7 @@
 //!
 //! 1. `EncodeRequest` with `PixelLayout::L8` — direct lossy / lossless encoding
 //!    from a single-channel grayscale buffer.
-//! 2. `WebpEncoderConfig` with `ImageSpec::gray8_srgb()` — the zencodec
+//! 2. `WebpEncoderConfig` with `ImageSpec::GRAY8_SRGB` — the zencodec
 //!    adapter, which previously expanded gray→RGB into a 3× transient `Vec`
 //!    before handing off; now passes the buffer through to the L8 path
 //!    zero-copy.
@@ -21,7 +21,7 @@
 #![cfg(all(feature = "std", not(target_arch = "wasm32")))]
 
 use zencodec::encode::{EncodeJob, Encoder, EncoderConfig as _};
-use zenpixels::{ImageSpec, PixelView};
+use zenpixels::PixelView;
 use zenwebp::zencodec::WebpEncoderConfig;
 use zenwebp::{EncodeRequest, LosslessConfig, LossyConfig, PixelLayout};
 
@@ -115,7 +115,8 @@ fn zencodec_gray8_passthrough_lossless_byte_exact() {
     let gray = make_gray_image(w, h);
 
     let cfg = WebpEncoderConfig::lossless().with_exact(true);
-    let slice = PixelView::new(&gray, w, h, w as usize, ImageSpec::gray8_srgb()).expect("slice");
+    let slice =
+        PixelView::new(&gray, w, h, w as usize, &zenpixels::specs::GRAY8_SRGB).expect("slice");
     let bytes = cfg
         .job()
         .encoder()
@@ -152,8 +153,8 @@ fn zencodec_gray8_padded_stride_lossless_byte_exact() {
     }
 
     let cfg = WebpEncoderConfig::lossless().with_exact(true);
-    let slice =
-        PixelView::new(&padded, w, h, stride_bytes, ImageSpec::gray8_srgb()).expect("padded slice");
+    let slice = PixelView::new(&padded, w, h, stride_bytes, &zenpixels::specs::GRAY8_SRGB)
+        .expect("padded slice");
     let bytes = cfg
         .job()
         .encoder()

@@ -11,12 +11,7 @@ mod tests {
     use zenpixels::{ImageSpec as D, PixelView};
     #[test]
     fn native_rows_match_visible_samples_and_keep_representable_views_borrowed() {
-        for desc in [
-            D::rgb8_srgb(),
-            D::rgba8_srgb(),
-            D::gray8_srgb(),
-            D::graya8_srgb(),
-        ] {
+        for desc in [D::RGB8_SRGB, D::RGBA8_SRGB, D::GRAY8_SRGB, D::GRAYA8_SRGB] {
             let row = 2 * desc.layout.bytes_per_pixel();
             for padding in [0, 1, 2, 3, 4, 7] {
                 let stride = row + padding;
@@ -26,7 +21,7 @@ mod tests {
                         data[y * stride + x] = (y * row + x) as u8;
                     }
                 }
-                let view = PixelView::new(&data, 2, 3, stride, desc.clone()).unwrap();
+                let view = PixelView::new(&data, 2, 3, stride, &desc).unwrap();
                 let (bytes, pixel_stride) = whole_pixel_rows(&view).unwrap();
                 for y in 0..3 {
                     let start = y * pixel_stride * desc.layout.bytes_per_pixel();

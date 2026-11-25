@@ -118,7 +118,7 @@ type Call = fn(
 
 #[test]
 fn call_and_job_pulses_each_stop_the_animation_encoder() {
-    let px = PixelBuf::from_bytes(pattern(32, 24, 9), 32, 24, ImageSpec::rgba8_srgb()).unwrap();
+    let px = PixelBuf::from_bytes(pattern(32, 24, 9), 32, 24, ImageSpec::RGBA8_SRGB).unwrap();
     let calls: [(&str, Call); 3] = [
         ("push_frame", |e, px, p| {
             e.push_frame(px.as_view(), 20, p).map_err(category)
@@ -188,7 +188,14 @@ impl DecodeRowSink for Rows {
         let stride = width as usize * descriptor.layout.bytes_per_pixel();
         self.buf.resize(height as usize * stride, 0);
         self.rows += height;
-        Ok(PixelViewMut::new(&mut self.buf, width, height, stride, descriptor).unwrap())
+        Ok(PixelViewMut::new_with_spec_cow(
+            &mut self.buf,
+            width,
+            height,
+            stride,
+            zenpixels::SpecCow::from_owned(descriptor),
+        )
+        .unwrap())
     }
 }
 

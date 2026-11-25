@@ -12,7 +12,7 @@ fn declared_rows_preserve_strided_pixels_and_protocol() {
     .into_iter()
     .enumerate()
     {
-        let desc = ImageSpec::rgb8_srgb();
+        let desc = ImageSpec::RGB8_SRGB;
         for stride in [15, 18, 24] {
             let (w, h) = (5, 4);
             let mut bytes = vec![199; stride * h as usize];
@@ -21,7 +21,7 @@ fn declared_rows_preserve_strided_pixels_and_protocol() {
                     bytes[y * stride + x] = (x * 13 + y * 41) as u8;
                 }
             }
-            let image = || PixelView::new(&bytes, w, h, stride, desc.clone()).unwrap();
+            let image = || PixelView::new(&bytes, w, h, stride, &desc).unwrap();
             let packed: Vec<u8> = bytes
                 .chunks(stride)
                 .flat_map(|row| row[..w as usize * 3].iter().copied())
@@ -31,7 +31,7 @@ fn declared_rows_preserve_strided_pixels_and_protocol() {
                 .job()
                 .encoder()
                 .unwrap()
-                .encode(PixelView::new(&packed, w, h, w as usize * 3, desc.clone()).unwrap())
+                .encode(PixelView::new(&packed, w, h, w as usize * 3, &desc).unwrap())
                 .unwrap()
                 .into_vec();
             let (decoded, ow, oh) = webpx::decode_rgba(&expected).unwrap();
@@ -67,7 +67,7 @@ fn declared_rows_preserve_strided_pixels_and_protocol() {
                 }
                 for y in [0, 2] {
                     enc.push_rows(
-                        PixelView::new(&bytes[y * stride..], w, 2, stride, desc.clone()).unwrap(),
+                        PixelView::new(&bytes[y * stride..], w, 2, stride, &desc).unwrap(),
                     )
                     .unwrap();
                 }
@@ -78,18 +78,18 @@ fn declared_rows_preserve_strided_pixels_and_protocol() {
             assert!(enc.encode(image()).is_err());
             let mut enc = cfg.clone().job().encoder().unwrap();
             enc.begin(w, h, desc.clone()).unwrap();
-            enc.push_rows(PixelView::new(&bytes, w, 2, stride, desc.clone()).unwrap())
+            enc.push_rows(PixelView::new(&bytes, w, 2, stride, &desc).unwrap())
                 .unwrap();
             assert!(enc.finish().is_err());
             let mut enc = cfg.clone().job().encoder().unwrap();
             enc.begin(w, h, desc.clone()).unwrap();
             assert!(
-                enc.push_rows(PixelView::new(&bytes, w - 1, 1, stride, desc.clone()).unwrap())
+                enc.push_rows(PixelView::new(&bytes, w - 1, 1, stride, &desc).unwrap())
                     .is_err()
             );
             enc.push_rows(image()).unwrap();
             assert!(
-                enc.push_rows(PixelView::new(&bytes, w, 1, stride, desc.clone()).unwrap())
+                enc.push_rows(PixelView::new(&bytes, w, 1, stride, &desc).unwrap())
                     .is_err()
             );
             assert_eq!(enc.finish().unwrap().into_vec(), expected);
@@ -113,14 +113,14 @@ fn shared_streaming_conformance_exercises_declared_webp_rows() {
 fn begin_accepts_a_supported_webp_canvas() {
     let mut encoder = WebpEncoderConfig::lossless().job().encoder().unwrap();
     assert_eq!(
-        encoder.begin(5, 4, ImageSpec::rgb8_srgb()).unwrap(),
+        encoder.begin(5, 4, ImageSpec::RGB8_SRGB).unwrap(),
         zencodec::encode::OutputTiming::AT_FINISH,
     );
 }
 
 #[test]
 fn legacy_rows_do_not_encode_padding_as_samples() {
-    let desc = ImageSpec::rgb8_srgb();
+    let desc = ImageSpec::RGB8_SRGB;
     let packed: Vec<u8> = (0..60).map(|i| (i * 3) as u8).collect();
     let mut padded = vec![199; 96];
     for y in 0..4 {
@@ -132,12 +132,12 @@ fn legacy_rows_do_not_encode_padding_as_samples() {
         .job()
         .encoder()
         .unwrap()
-        .encode(PixelView::new(&packed, 5, 4, 15, desc.clone()).unwrap())
+        .encode(PixelView::new(&packed, 5, 4, 15, &desc).unwrap())
         .unwrap()
         .into_vec();
     let mut encoder = cfg.job().encoder().unwrap();
     encoder
-        .push_rows(PixelView::new(&padded, 5, 4, 24, desc.clone()).unwrap())
+        .push_rows(PixelView::new(&padded, 5, 4, 24, &desc).unwrap())
         .unwrap();
     assert_eq!(encoder.finish().unwrap().into_vec(), expected);
 }

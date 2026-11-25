@@ -212,8 +212,8 @@ fn ymd_today() -> String {
 
 fn load_png_rgb8(path: &PathBuf) -> Option<(Vec<u8>, u32, u32)> {
     use enough::Unstoppable;
-    use zenpixels::{ImageSpec, PeakSource};
-    use zenpixels_convert::{ConvertPolicy, convert_buf};
+    use zenpixels::ImageSpec;
+    use zenpixels_convert::{ConvertPolicy, convert_to_buf};
     use zenpng::PngDecodeConfig;
 
     let bytes = std::fs::read(path).ok()?;
@@ -223,11 +223,10 @@ fn load_png_rgb8(path: &PathBuf) -> Option<(Vec<u8>, u32, u32)> {
 
     // Convert to tightly-packed RGB8 regardless of source layout
     // (handles RGBA, grayscale, palette, gray+alpha, 16-bit → 8-bit).
-    let rgb_buf = convert_buf(
+    let rgb_buf = convert_to_buf(
         &output.pixels.as_view(),
-        ImageSpec::rgb8_srgb(),
+        ImageSpec::RGB8_SRGB,
         &ConvertPolicy::working_linear(),
-        PeakSource::Measured,
     )
     .ok()?;
     let slice = rgb_buf.as_view();

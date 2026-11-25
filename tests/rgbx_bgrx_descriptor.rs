@@ -33,11 +33,11 @@ fn solid_pattern_4bpp(w: u32, h: u32, rgb_order: bool) -> Vec<u8> {
 fn supported_descriptors_includes_rgbx_and_bgrx() {
     let desc = <zenwebp::zencodec::WebpEncoderConfig as EncoderConfig>::supported_descriptors();
     assert!(
-        desc.contains(&ImageSpec::rgbx8_srgb()),
+        desc.contains(&ImageSpec::RGBX8_SRGB),
         "RGBX8_SRGB must be in supported_descriptors"
     );
     assert!(
-        desc.contains(&ImageSpec::bgrx8_srgb()),
+        desc.contains(&ImageSpec::BGRX8_SRGB),
         "BGRX8_SRGB must be in supported_descriptors"
     );
 }
@@ -52,7 +52,7 @@ fn encode_rgbx_lossless_roundtrip() {
     let job = config.dyn_job();
     let encoder = job.into_encoder().expect("into_encoder");
 
-    let ps = PixelView::new(&rgbx, w, h, (w * 4) as usize, ImageSpec::rgbx8_srgb())
+    let ps = PixelView::new(&rgbx, w, h, (w * 4) as usize, &zenpixels::specs::RGBX8_SRGB)
         .expect("pixel slice");
     let output = encoder.encode(ps).expect("encode");
     assert!(!output.data().is_empty());
@@ -85,7 +85,7 @@ fn encode_bgrx_lossless_roundtrip() {
     let job = config.dyn_job();
     let encoder = job.into_encoder().expect("into_encoder");
 
-    let ps = PixelView::new(&bgrx, w, h, (w * 4) as usize, ImageSpec::bgrx8_srgb())
+    let ps = PixelView::new(&bgrx, w, h, (w * 4) as usize, &zenpixels::specs::BGRX8_SRGB)
         .expect("pixel slice");
     let output = encoder.encode(ps).expect("encode");
     assert!(!output.data().is_empty());

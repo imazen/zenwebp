@@ -12,6 +12,6 @@ pub(super) fn whole_pixel_rows<'a>(
             pixels.stride() / pixel_size,
         ))
     } else {
-        Ok((pixels.try_contiguous_bytes()?, pixels.width() as usize))
+        Ok((pixels.contiguous_bytes()?, pixels.width() as usize))
     }
 }

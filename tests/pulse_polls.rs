@@ -49,7 +49,7 @@ fn pattern(w: u32, h: u32, seed: u32) -> Vec<u8> {
 }
 
 fn frame(w: u32, h: u32, seed: u32) -> PixelBuf {
-    PixelBuf::from_bytes(pattern(w, h, seed), w, h, ImageSpec::rgba8_srgb()).unwrap()
+    PixelBuf::from_bytes(pattern(w, h, seed), w, h, ImageSpec::RGBA8_SRGB).unwrap()
 }
 
 fn still(cfg: &EncoderConfig, w: u32, h: u32) -> Vec<u8> {
@@ -192,7 +192,14 @@ impl DecodeRowSink for Rows {
     ) -> Result<PixelViewMut<'_>, zencodec::decode::SinkError> {
         let stride = width as usize * descriptor.layout.bytes_per_pixel();
         self.buf.resize(height as usize * stride, 0);
-        Ok(PixelViewMut::new(&mut self.buf, width, height, stride, descriptor).unwrap())
+        Ok(PixelViewMut::new_with_spec_cow(
+            &mut self.buf,
+            width,
+            height,
+            stride,
+            zenpixels::SpecCow::from_owned(descriptor),
+        )
+        .unwrap())
     }
 }
 

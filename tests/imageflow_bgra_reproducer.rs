@@ -4,7 +4,7 @@
 //!
 //!   EncoderConfig::new() -> dyn_job() -> into_encoder() -> encoder.encode(PixelView)
 //!
-//! with `ImageSpec::bgra8_srgb()`. This test mimics that exact call
+//! with `ImageSpec::BGRA8_SRGB`. This test mimics that exact call
 //! chain to surface bugs that the `EncodeRequest::lossless(... PixelLayout::Rgba8 ...)`
 //! golden-regression tests don't exercise (because they pass RGBA directly).
 #![cfg(all(feature = "std", not(target_arch = "wasm32")))]
@@ -43,9 +43,9 @@ fn zencodec_dispatch_bgra_lossless_preserves_channels() {
     let job = config.dyn_job();
     let encoder = job.into_encoder().expect("into_encoder");
 
-    let desc = ImageSpec::bgra8_srgb();
+    let desc = ImageSpec::BGRA8_SRGB;
     let stride = w as usize * 4;
-    let ps = PixelView::new(&bgra, w, h, stride, desc).expect("pixel slice");
+    let ps = PixelView::new(&bgra, w, h, stride, &desc).expect("pixel slice");
     let output = encoder.encode(ps).expect("encode");
     let webp = output.data();
 
@@ -103,8 +103,8 @@ fn zencodec_dispatch_bgra_lossless_with_padded_stride() {
     let job = config.dyn_job();
     let encoder = job.into_encoder().expect("into_encoder");
 
-    let desc = ImageSpec::bgra8_srgb();
-    let ps = PixelView::new(&padded, w, h, padded_stride, desc).expect("padded pixel slice");
+    let desc = ImageSpec::BGRA8_SRGB;
+    let ps = PixelView::new(&padded, w, h, padded_stride, &desc).expect("padded pixel slice");
     let output = encoder.encode(ps).expect("encode");
     let webp = output.data();
 

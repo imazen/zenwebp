@@ -158,10 +158,10 @@ fn zenwebp_bgra_dyn_dispatch_matches_libwebp_on_rose() {
 
     // Replicate imageflow's preferred-format list exactly.
     let preferred = [
-        ImageSpec::bgra8_srgb(),
-        ImageSpec::rgba8_srgb(),
-        ImageSpec::rgb8_srgb(),
-        ImageSpec::gray8_srgb(),
+        ImageSpec::BGRA8_SRGB,
+        ImageSpec::RGBA8_SRGB,
+        ImageSpec::RGB8_SRGB,
+        ImageSpec::GRAY8_SRGB,
     ];
 
     let config: Box<dyn DynDecoderConfig> = Box::new(zenwebp::zencodec::WebpDecoderConfig::new());
@@ -175,7 +175,7 @@ fn zenwebp_bgra_dyn_dispatch_matches_libwebp_on_rose() {
     let px = output.pixels();
     let descriptor = px.spec();
     let (zw, zh) = (px.width(), px.rows());
-    let zen_bytes: Vec<u8> = px.try_contiguous_bytes().unwrap().into_owned();
+    let zen_bytes: Vec<u8> = px.contiguous_bytes().unwrap().into_owned();
     eprintln!(
         "zen dyn dispatch delivered {:?} at {}x{}",
         descriptor, zw, zh
@@ -186,14 +186,14 @@ fn zenwebp_bgra_dyn_dispatch_matches_libwebp_on_rose() {
     assert_eq!((zw, zh), (lw, lh), "dimension mismatch");
 
     // Convert zen output to RGBA for comparison.
-    let zen_rgba: Vec<u8> = if descriptor == &ImageSpec::bgra8_srgb() {
+    let zen_rgba: Vec<u8> = if descriptor == &ImageSpec::BGRA8_SRGB {
         zen_bytes
             .as_chunks::<4>()
             .0
             .iter()
             .flat_map(|p| [p[2], p[1], p[0], p[3]])
             .collect()
-    } else if descriptor == &ImageSpec::rgba8_srgb() {
+    } else if descriptor == &ImageSpec::RGBA8_SRGB {
         zen_bytes.clone()
     } else {
         panic!("unexpected descriptor {:?}", descriptor)

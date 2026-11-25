@@ -297,7 +297,7 @@ fn zencodec_jobs_report_through_with_pulse() {
         pattern(40, 30, 5),
         40,
         30,
-        zenpixels::ImageSpec::rgba8_srgb(),
+        zenpixels::ImageSpec::RGBA8_SRGB,
     )
     .unwrap();
     let t = tree();

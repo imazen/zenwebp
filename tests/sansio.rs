@@ -54,7 +54,7 @@ fn assert_parity(data: &[u8]) {
             let pixels = expected.into_buffer();
             assert_eq!((info.width, info.height), (pixels.width(), pixels.height()));
             assert_eq!(sink.descriptor(), Some(pixels.spec().clone()));
-            assert_eq!(sink.bytes(), pixels.try_into_vec::<u8>().unwrap());
+            assert_eq!(sink.bytes(), pixels.into_vec::<u8>().unwrap());
             assert!(sink.finished());
         }
         (Err(_), Err(zencodec_io::DriveError::Step(StepError::Codec(_)))) => {}
@@ -280,8 +280,8 @@ fn assert_other_decode_paths(data: &[u8]) {
     use zenpixels::ImageSpec;
     for preferred in [
         &[][..],
-        &[ImageSpec::bgra8_srgb()][..],
-        &[ImageSpec::rgba8_srgb()][..],
+        &[ImageSpec::BGRA8_SRGB][..],
+        &[ImageSpec::RGBA8_SRGB][..],
     ] {
         let reference = D::new()
             .job()
@@ -339,7 +339,7 @@ fn assert_other_decode_paths(data: &[u8]) {
         .unwrap();
         assert!(stats.reads > 0);
         assert_eq!(sink.descriptor(), Some(reference.spec().clone()));
-        assert_eq!(sink.bytes(), reference.try_into_vec::<u8>().unwrap());
+        assert_eq!(sink.bytes(), reference.into_vec::<u8>().unwrap());
     }
 }
 

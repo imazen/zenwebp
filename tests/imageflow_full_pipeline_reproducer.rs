@@ -43,9 +43,9 @@ fn reencode_rose_lossless_bgra_dispatch() {
     let config = zenwebp::zencodec::WebpEncoderConfig::lossless().with_quality(85.0);
     let job = config.dyn_job();
     let encoder = job.into_encoder().expect("into_encoder");
-    let desc = ImageSpec::bgra8_srgb();
+    let desc = ImageSpec::BGRA8_SRGB;
     let stride = w as usize * 4;
-    let ps = PixelView::new(&bgra, w, h, stride, desc).expect("bgra pixel slice");
+    let ps = PixelView::new(&bgra, w, h, stride, &desc).expect("bgra pixel slice");
     let output = encoder.encode(ps).expect("encode bgra");
     let webp = output.data();
 

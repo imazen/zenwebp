@@ -1226,7 +1226,7 @@ impl<'a> EncodeRequest<'a> {
     /// closed-loop iteration (encode → decode → measure → adjust)
     /// transparently and returns the converged bytes. Use
     /// [`Self::encode_with_metrics`] if you also need the
-    /// [`ZensimEncodeMetrics`] (achieved score, passes used,
+    /// [`ZensimEncodeMetrics`](crate::ZensimEncodeMetrics) (achieved score, passes used,
     /// targets-met flag).
     #[track_caller]
     pub fn encode(self) -> EncodeResult<Vec<u8>> {
@@ -1260,7 +1260,7 @@ impl<'a> EncodeRequest<'a> {
         self.encode_inner()
     }
 
-    /// Encode to WebP bytes alongside [`ZensimEncodeMetrics`].
+    /// Encode to WebP bytes alongside [`ZensimEncodeMetrics`](crate::ZensimEncodeMetrics).
     ///
     /// When the lossy config has `target_zensim` set and the
     /// `target-zensim` crate feature is enabled (with [`PixelLayout::Rgb8`]
@@ -1269,7 +1269,7 @@ impl<'a> EncodeRequest<'a> {
     /// `targets_met` flag in the returned metrics. In every other case
     /// where iteration does not run (no target, feature disabled,
     /// lossless), the metrics are filled via
-    /// [`ZensimEncodeMetrics::no_target`] — score `NaN`,
+    /// `ZensimEncodeMetrics::no_target` — score `NaN`,
     /// `passes_used=1`, `targets_met=true`.
     ///
     /// Pixel layout: `target_zensim` supports [`PixelLayout::Rgb8`] and

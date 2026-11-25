@@ -89,7 +89,7 @@ fn bench(suite: &mut Suite) {
                     let offset = ((row + i * 8) * info.width as usize + i * 16) * 3;
                     data.extend_from_slice(&photo[offset..offset + 256 * 3]);
                 }
-                PixelBuf::from_bytes(data, 256, 256, ImageSpec::rgb8_srgb()).unwrap()
+                PixelBuf::from_bytes(data, 256, 256, ImageSpec::RGB8_SRGB).unwrap()
             })
             .collect(),
     );

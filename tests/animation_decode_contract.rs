@@ -28,7 +28,7 @@ fn encode(lossy: bool, icc: bool) -> Vec<u8> {
             }
         })
         .collect();
-    let pixels = PixelBuf::from_bytes(data, 128, 256, ImageSpec::rgba8_srgb()).unwrap();
+    let pixels = PixelBuf::from_bytes(data, 128, 256, ImageSpec::RGBA8_SRGB).unwrap();
     let config = if lossy {
         WebpEncoderConfig::lossy()
     } else {
@@ -166,7 +166,7 @@ fn still_decoder_views_keep_icc_context_and_bgra_pixels() {
     let data: Vec<_> = (0..17 * 19 * 4)
         .map(|i| ((i * 73 + i / 11) % 255) as u8)
         .collect();
-    let pixels = PixelBuf::from_bytes(data, 17, 19, ImageSpec::rgba8_srgb()).unwrap();
+    let pixels = PixelBuf::from_bytes(data, 17, 19, ImageSpec::RGBA8_SRGB).unwrap();
     let icc = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
     for lossy in [false, true] {
         let config = if lossy {
@@ -191,7 +191,7 @@ fn still_decoder_views_keep_icc_context_and_bgra_pixels() {
             .decode()
             .unwrap()
             .pixels()
-            .try_contiguous_bytes()
+            .contiguous_bytes()
             .unwrap()
             .into_owned();
         for allow_icc in [None, Some(true), Some(false)] {
@@ -205,11 +205,7 @@ fn still_decoder_views_keep_icc_context_and_bgra_pixels() {
                 }
             };
             for bgra in [false, true] {
-                let preferred: &[ImageSpec] = if bgra {
-                    &[ImageSpec::bgra8_srgb()]
-                } else {
-                    &[]
-                };
+                let preferred: &[ImageSpec] = if bgra { &[ImageSpec::BGRA8_SRGB] } else { &[] };
                 let decoded = job()
                     .decoder(Cow::Borrowed(output.data()), preferred)
                     .unwrap()
@@ -222,7 +218,7 @@ fn still_decoder_views_keep_icc_context_and_bgra_pixels() {
                     }
                 }
                 assert_eq!(
-                    decoded.pixels().try_contiguous_bytes().unwrap().as_ref(),
+                    decoded.pixels().contiguous_bytes().unwrap().as_ref(),
                     expected
                 );
                 let view = decoded.pixels();
@@ -262,7 +258,7 @@ fn still_decoder_views_keep_icc_context_and_bgra_pixels() {
                 let mut streamed = Vec::new();
                 while let Some((_, batch)) = streaming.next_batch().unwrap() {
                     check(&batch);
-                    streamed.extend_from_slice(&batch.try_contiguous_bytes().unwrap());
+                    streamed.extend_from_slice(&batch.contiguous_bytes().unwrap());
                 }
                 assert_eq!(streamed, expected);
                 let mut animation = job()
@@ -271,7 +267,7 @@ fn still_decoder_views_keep_icc_context_and_bgra_pixels() {
                 let frame = animation.render_next_frame(None).unwrap().unwrap();
                 check(frame.pixels());
                 assert_eq!(
-                    frame.pixels().try_contiguous_bytes().unwrap().as_ref(),
+                    frame.pixels().contiguous_bytes().unwrap().as_ref(),
                     expected
                 );
                 assert!(animation.render_next_frame(None).unwrap().is_none());

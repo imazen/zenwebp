@@ -322,15 +322,15 @@ impl WebpEncoderConfig {
 }
 
 static ENCODE_DESCRIPTORS: &[ImageSpec] = &[
-    ImageSpec::rgb8_srgb(),
-    ImageSpec::rgba8_srgb(),
-    ImageSpec::bgra8_srgb(),
-    ImageSpec::rgbx8_srgb(),
-    ImageSpec::bgrx8_srgb(),
-    ImageSpec::gray8_srgb(),
-    ImageSpec::rgbf32_linear(),
-    ImageSpec::rgbaf32_linear(),
-    ImageSpec::grayf32_linear(),
+    ImageSpec::RGB8_SRGB,
+    ImageSpec::RGBA8_SRGB,
+    ImageSpec::BGRA8_SRGB,
+    ImageSpec::RGBX8_SRGB,
+    ImageSpec::BGRX8_SRGB,
+    ImageSpec::GRAY8_SRGB,
+    ImageSpec::RGBF32_LINEAR,
+    ImageSpec::RGBAF32_LINEAR,
+    ImageSpec::GRAYF32_LINEAR,
 ];
 
 static ENCODE_CAPABILITIES: zencodec::encode::EncodeCapabilities =
@@ -1001,21 +1001,21 @@ fn pixels_to_webp_input<'a>(
             byte_stride::whole_pixel_rows(pixels).map_err(encode_buffer_error)?;
         Ok((bytes, PixelLayout::Rgba8, w, h, stride_pixels))
     } else if desc.layout == SampleLayout::BGRA8 {
-        let raw = pixels.try_contiguous_bytes().map_err(encode_buffer_error)?;
+        let raw = pixels.contiguous_bytes().map_err(encode_buffer_error)?;
         let mut rgba = alloc::vec![0u8; raw.len()];
         crate::packed_pixels::bgra_to_rgba(&raw, &mut rgba)
             .map_err(|e| EncodeError::InvalidBufferSize(alloc::format!("pixel conversion: {e}")))?;
         Ok((Cow::Owned(rgba), PixelLayout::Rgba8, w, h, w as usize))
     } else if desc.layout == SampleLayout::RGBX8 {
         // Byte 3 is padding — strip to 3-channel RGB.
-        let raw = pixels.try_contiguous_bytes().map_err(encode_buffer_error)?;
+        let raw = pixels.contiguous_bytes().map_err(encode_buffer_error)?;
         let mut rgb = alloc::vec![0u8; (w as usize) * (h as usize) * 3];
         crate::packed_pixels::rgba_to_rgb(&raw, &mut rgb)
             .map_err(|e| EncodeError::InvalidBufferSize(alloc::format!("pixel conversion: {e}")))?;
         Ok((Cow::Owned(rgb), PixelLayout::Rgb8, w, h, w as usize))
     } else if desc.layout == SampleLayout::BGRX8 {
         // BGRA layout with padding byte — strip to 3-channel RGB via swap.
-        let raw = pixels.try_contiguous_bytes().map_err(encode_buffer_error)?;
+        let raw = pixels.contiguous_bytes().map_err(encode_buffer_error)?;
         let mut rgb = alloc::vec![0u8; (w as usize) * (h as usize) * 3];
         crate::packed_pixels::bgra_to_rgb(&raw, &mut rgb)
             .map_err(|e| EncodeError::InvalidBufferSize(alloc::format!("pixel conversion: {e}")))?;
@@ -1032,20 +1032,20 @@ fn pixels_to_webp_input<'a>(
         let (bytes, stride_pixels) =
             byte_stride::whole_pixel_rows(pixels).map_err(encode_buffer_error)?;
         Ok((bytes, PixelLayout::La8, w, h, stride_pixels))
-    } else if *desc == ImageSpec::rgbf32_linear() {
-        let raw = pixels.try_contiguous_bytes().map_err(encode_buffer_error)?;
+    } else if *desc == ImageSpec::RGBF32_LINEAR {
+        let raw = pixels.contiguous_bytes().map_err(encode_buffer_error)?;
         let floats = as_f32_slice(&raw);
         let mut rgb = alloc::vec![0u8; floats.len()];
         linear_srgb::default::linear_to_srgb_u8_slice(&floats, &mut rgb);
         Ok((Cow::Owned(rgb), PixelLayout::Rgb8, w, h, w as usize))
-    } else if *desc == ImageSpec::rgbaf32_linear() {
-        let raw = pixels.try_contiguous_bytes().map_err(encode_buffer_error)?;
+    } else if *desc == ImageSpec::RGBAF32_LINEAR {
+        let raw = pixels.contiguous_bytes().map_err(encode_buffer_error)?;
         let floats = as_f32_slice(&raw);
         let mut rgba = alloc::vec![0u8; floats.len()];
         linear_srgb::default::linear_to_srgb_u8_rgba_slice(&floats, &mut rgba);
         Ok((Cow::Owned(rgba), PixelLayout::Rgba8, w, h, w as usize))
-    } else if *desc == ImageSpec::grayf32_linear() {
-        let raw = pixels.try_contiguous_bytes().map_err(encode_buffer_error)?;
+    } else if *desc == ImageSpec::GRAYF32_LINEAR {
+        let raw = pixels.contiguous_bytes().map_err(encode_buffer_error)?;
         let floats = as_f32_slice(&raw);
         let mut gray_u8 = alloc::vec![0u8; floats.len()];
         linear_srgb::default::linear_to_srgb_u8_slice(&floats, &mut gray_u8);
@@ -1642,9 +1642,9 @@ impl Default for WebpDecoderConfig {
 }
 
 static DECODE_DESCRIPTORS: &[ImageSpec] = &[
-    ImageSpec::rgb8_srgb(),
-    ImageSpec::rgba8_srgb(),
-    ImageSpec::bgra8_srgb(),
+    ImageSpec::RGB8_SRGB,
+    ImageSpec::RGBA8_SRGB,
+    ImageSpec::BGRA8_SRGB,
 ];
 
 static DECODE_CAPABILITIES: zencodec::decode::DecodeCapabilities =
@@ -1830,8 +1830,8 @@ impl WebpDecodeJob {
         }
 
         // Determine bpp from preferred list
-        let has_alpha_preferred = preferred.contains(&ImageSpec::rgba8_srgb())
-            || preferred.contains(&ImageSpec::bgra8_srgb());
+        let has_alpha_preferred = preferred.contains(&ImageSpec::RGBA8_SRGB)
+            || preferred.contains(&ImageSpec::BGRA8_SRGB);
         let default_bpp: usize = if has_alpha_preferred { 4 } else { 3 };
 
         // Parse RIFF/WebP container
@@ -2143,16 +2143,16 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
     fn output_info(&self, data: &[u8]) -> Result<OutputInfo, At<zencodec::CodecError>> {
         let native = crate::ImageInfo::from_webp(data).map_err(zencodec::CodecError::of)?;
         let mut desc = if native.has_alpha {
-            ImageSpec::rgba8_srgb()
+            ImageSpec::RGBA8_SRGB
         } else {
-            ImageSpec::rgb8_srgb()
+            ImageSpec::RGB8_SRGB
         };
         // Apply RGBA→BGRA negotiation if the stored preferred list requests it.
         if !self.preferred.is_empty()
-            && self.preferred.contains(&ImageSpec::bgra8_srgb())
-            && desc == ImageSpec::rgba8_srgb()
+            && self.preferred.contains(&ImageSpec::BGRA8_SRGB)
+            && desc == ImageSpec::RGBA8_SRGB
         {
-            desc = ImageSpec::bgra8_srgb();
+            desc = ImageSpec::BGRA8_SRGB;
         }
         let info = to_image_info(&native, None);
         desc = zencodec::helpers::descriptor_for_decoded_pixels_v2(
@@ -2335,8 +2335,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
         .map_err(zencodec::CodecError::of)?;
         let base_info = self.apply_policy_to_info(base_info);
         let mut frame_spec = retained_decode_spec(source_desc, &base_info);
-        if frame_spec.layout == SampleLayout::RGBA8 && preferred.contains(&ImageSpec::bgra8_srgb())
-        {
+        if frame_spec.layout == SampleLayout::RGBA8 && preferred.contains(&ImageSpec::BGRA8_SRGB) {
             frame_spec.layout = SampleLayout::BGRA8;
         }
         let orientation = resolve_orientation(self.orientation, base_info.orientation);
@@ -2520,7 +2519,7 @@ impl WebpDecoder<'_> {
         };
 
         let buf = if has_alpha {
-            PixelBuf::from_bytes(pixels, w, h, ImageSpec::rgba8_srgb())
+            PixelBuf::from_bytes(pixels, w, h, ImageSpec::RGBA8_SRGB)
                 .map_err(|_| at!(DecodeError::InvalidParameter("pixel count mismatch".into())))?
         } else {
             // Strip alpha channel — lossy path always decodes to RGBA when alpha is present,
@@ -2536,7 +2535,7 @@ impl WebpDecoder<'_> {
             .map_err(|_| at!(DecodeError::MemoryLimitExceeded))?;
             crate::packed_pixels::rgba_to_rgb(&pixels, &mut rgb)
                 .map_err(|e| at!(DecodeError::InvalidParameter(alloc::format!("{e}"))))?;
-            PixelBuf::from_bytes(rgb, w, h, ImageSpec::rgb8_srgb())
+            PixelBuf::from_bytes(rgb, w, h, ImageSpec::RGB8_SRGB)
                 .map_err(|_| at!(DecodeError::InvalidParameter("pixel count mismatch".into())))?
         };
 
@@ -2558,7 +2557,7 @@ impl WebpDecoder<'_> {
         let info = self.apply_policy_to_info(info);
         let descriptor = retained_decode_spec(descriptor, &info);
         let buf = buf
-            .with_spec(descriptor)
+            .relabel_spec(descriptor)
             .map_err(decode_buffer_error)?
             .with_origin(info.source_color.color_origin());
 
@@ -2583,9 +2582,9 @@ impl WebpDecoder<'_> {
         let (pixels, w, h, layout) = req.decode()?;
 
         let buf: PixelBuf = match layout {
-            PixelLayout::Rgb8 => PixelBuf::from_bytes(pixels, w, h, ImageSpec::rgb8_srgb())
+            PixelLayout::Rgb8 => PixelBuf::from_bytes(pixels, w, h, ImageSpec::RGB8_SRGB)
                 .map_err(|_| at!(DecodeError::InvalidParameter("pixel count mismatch".into())))?,
-            PixelLayout::Rgba8 => PixelBuf::from_bytes(pixels, w, h, ImageSpec::rgba8_srgb())
+            PixelLayout::Rgba8 => PixelBuf::from_bytes(pixels, w, h, ImageSpec::RGBA8_SRGB)
                 .map_err(|_| at!(DecodeError::InvalidParameter("pixel count mismatch".into())))?,
             _ => {
                 // Fallback: decode as RGBA
@@ -2598,9 +2597,9 @@ impl WebpDecoder<'_> {
                     rgba_req = rgba_req.pulse(pulse);
                 }
                 let (rgba_pixels, rw, rh) = rgba_req.decode_rgba()?;
-                PixelBuf::from_bytes(rgba_pixels, rw, rh, ImageSpec::rgba8_srgb()).map_err(
-                    |_| at!(DecodeError::InvalidParameter("pixel count mismatch".into())),
-                )?
+                PixelBuf::from_bytes(rgba_pixels, rw, rh, ImageSpec::RGBA8_SRGB).map_err(|_| {
+                    at!(DecodeError::InvalidParameter("pixel count mismatch".into()))
+                })?
             }
         };
 
@@ -2623,7 +2622,7 @@ impl WebpDecoder<'_> {
         let info = self.apply_policy_to_info(info);
         let descriptor = retained_decode_spec(descriptor, &info);
         let buf = buf
-            .with_spec(descriptor)
+            .relabel_spec(descriptor)
             .map_err(decode_buffer_error)?
             .with_origin(info.source_color.color_origin());
 
@@ -2677,7 +2676,7 @@ fn negotiate_format(
     mut pixels: PixelBuf,
     preferred: &[ImageSpec],
 ) -> Result<PixelBuf, At<DecodeError>> {
-    if preferred.contains(&ImageSpec::bgra8_srgb()) && pixels.spec().layout == SampleLayout::RGBA8 {
+    if preferred.contains(&ImageSpec::BGRA8_SRGB) && pixels.spec().layout == SampleLayout::RGBA8 {
         let desc = ImageSpec::new(SampleLayout::BGRA8, pixels.spec().color.clone());
         let height = pixels.height();
         {
@@ -2687,7 +2686,7 @@ fn negotiate_format(
                     .expect("negotiate_format: validated 4bpp row");
             }
         }
-        return pixels.with_spec(desc).map_err(decode_buffer_error);
+        return pixels.relabel_spec(desc).map_err(decode_buffer_error);
     }
     Ok(pixels)
 }
@@ -2999,17 +2998,17 @@ impl Vp8StreamingDecoder {
         let has_alpha = alpha_plane.is_some();
         let effective_bpp = if has_alpha { 4 } else { bpp };
         let mut descriptor = if has_alpha || effective_bpp == 4 {
-            ImageSpec::rgba8_srgb()
+            ImageSpec::RGBA8_SRGB
         } else {
-            ImageSpec::rgb8_srgb()
+            ImageSpec::RGB8_SRGB
         };
 
         // Apply BGRA negotiation
         if !preferred.is_empty()
-            && preferred.contains(&ImageSpec::bgra8_srgb())
-            && descriptor == ImageSpec::rgba8_srgb()
+            && preferred.contains(&ImageSpec::BGRA8_SRGB)
+            && descriptor == ImageSpec::RGBA8_SRGB
         {
-            descriptor = ImageSpec::bgra8_srgb();
+            descriptor = ImageSpec::BGRA8_SRGB;
         }
 
         descriptor = zencodec::helpers::descriptor_for_decoded_pixels_v2(
@@ -3103,7 +3102,7 @@ impl zencodec::decode::StreamingDecode for Vp8StreamingDecoder {
             self.width,
             num_rows as u32,
             row_bytes,
-            self.descriptor.clone(),
+            &self.descriptor,
         )
         .map_err(|_| {
             zencodec::CodecError::of(at!(DecodeError::InvalidParameter(
@@ -3147,7 +3146,7 @@ self_cell::self_cell! {
 /// Memory usage is O(canvas_size) instead of O(N_frames × canvas_size).
 ///
 /// The [`AnimationDecoder`] borrows `&[u8]` from the input data. A self-referential
-/// struct ([`OwnedAnimDecoder`] via `self_cell`) stores the owned data alongside
+/// struct (`OwnedAnimDecoder` via `self_cell`) stores the owned data alongside
 /// the borrowing decoder, satisfying the `'static` requirement on `AnimationFrameDec`.
 pub struct WebpAnimationFrameDecoder {
     inner: WebpAnimationInner,
@@ -3341,20 +3340,15 @@ impl NativeAnimationFrameDecoder {
                 if spec.layout == SampleLayout::BGRA8 {
                     spec.layout = SampleLayout::RGBA8;
                 }
-                let src = PixelView::from_packed(
-                    data,
-                    self.stored_width,
-                    self.stored_height,
-                    spec.clone(),
-                )
-                .map_err(decode_buffer_error)?;
+                let src = PixelView::from_bytes(data, self.stored_width, self.stored_height, &spec)
+                    .map_err(decode_buffer_error)?;
                 let stride = self.info.width as usize * spec.layout.bytes_per_pixel();
                 let mut dst = zenpixels::PixelViewMut::new(
                     frame_buf,
                     self.info.width,
                     self.info.height,
                     stride,
-                    spec,
+                    &spec,
                 )
                 .map_err(decode_buffer_error)?;
                 zenpixels_convert::orient::apply_orientation_into(&src, self.orientation, &mut dst)
@@ -3455,11 +3449,11 @@ impl zencodec::decode::AnimationFrameDecoder for NativeAnimationFrameDecoder {
             return Ok(None);
         };
 
-        let slice = PixelView::from_packed(
+        let slice = PixelView::from_bytes(
             &self.frame_buf,
             self.info.width,
             self.info.height,
-            self.frame_spec.clone(),
+            &self.frame_spec,
         )
         .map_err(decode_buffer_error)
         .map_err(zencodec::CodecError::of)?
@@ -3600,7 +3594,7 @@ fn resolve_orientation(hint: OrientationHint, intrinsic: Orientation) -> Orienta
 /// [`to_image_info`] already set.
 ///
 /// Otherwise the resolved orientation (see [`resolve_orientation`]) is physically
-/// applied to the pixels via [`zenpixels_convert::orient::orient_buf`],
+/// applied to the pixels via [`zenpixels_convert::orient::apply_orientation_owned`],
 /// and the reported `ImageInfo` is rewritten to the baked buffer's dimensions
 /// with [`Orientation::Identity`] (the pixels are final — no orientation remains
 /// to apply). The intrinsic EXIF orientation is read from the `ImageInfo` the
@@ -3614,8 +3608,8 @@ fn apply_orientation_to_output(
     }
     let (buf, mut details) = output.into_parts();
     let resolved = resolve_orientation(hint, details.info.orientation);
-    let baked =
-        zenpixels_convert::orient::orient_buf(buf, resolved).map_err(decode_orientation_error)?;
+    let baked = zenpixels_convert::orient::apply_orientation_owned(buf, resolved)
+        .map_err(decode_orientation_error)?;
 
     details.info.width = baked.width();
     details.info.height = baked.height();
@@ -3844,13 +3838,13 @@ mod tests {
     fn push_rows_matches_one_shot_bytes() {
         use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
         for (w, h) in [(1u32, 1u32), (2, 2), (3, 5), (17, 9), (67, 45)] {
-            for desc in [ImageSpec::rgb8_srgb(), ImageSpec::rgba8_srgb()] {
+            for desc in [ImageSpec::RGB8_SRGB, ImageSpec::RGBA8_SRGB] {
                 let bpp = desc.layout.bytes_per_pixel();
                 let px: Vec<u8> = (0..(w * h) as usize * bpp)
                     .map(|i| (i * 37 % 251) as u8 ^ (i / 7) as u8)
                     .collect();
                 let stride = w as usize * bpp;
-                let whole = || PixelView::new(&px, w, h, stride, desc.clone()).unwrap();
+                let whole = || PixelView::new(&px, w, h, stride, &desc).unwrap();
                 let mut configs: Vec<(alloc::string::String, WebpEncoderConfig)> = (0..=6u8)
                     .map(|m| {
                         (
@@ -3879,7 +3873,7 @@ mod tests {
                                 w,
                                 n,
                                 stride,
-                                desc.clone(),
+                                &desc,
                             )
                             .unwrap();
                             enc.push_rows(s).unwrap();
@@ -3902,7 +3896,7 @@ mod tests {
     use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 
     fn make_rgb8_pixels(w: u32, h: u32) -> PixelBuf {
-        let mut buf = PixelBuf::new(w, h, ImageSpec::rgb8_srgb()).unwrap();
+        let mut buf = PixelBuf::new(w, h, ImageSpec::RGB8_SRGB).unwrap();
         let mut s = buf.as_view_mut();
         for y in 0..h {
             let row = s.row_mut(y);
@@ -3914,7 +3908,7 @@ mod tests {
     }
 
     fn make_rgba8_pixels(w: u32, h: u32) -> PixelBuf {
-        let mut buf = PixelBuf::new(w, h, ImageSpec::rgba8_srgb()).unwrap();
+        let mut buf = PixelBuf::new(w, h, ImageSpec::RGBA8_SRGB).unwrap();
         let mut s = buf.as_view_mut();
         for y in 0..h {
             let row = s.row_mut(y);
@@ -4197,7 +4191,7 @@ mod tests {
 
     #[test]
     fn encoder_trait_gray8() {
-        let mut buf = PixelBuf::new(16, 16, ImageSpec::gray8_srgb()).unwrap();
+        let mut buf = PixelBuf::new(16, 16, ImageSpec::GRAY8_SRGB).unwrap();
         {
             let mut s = buf.as_view_mut();
             for y in 0..16u32 {
@@ -4436,7 +4430,7 @@ mod tests {
         assert_eq!(encoder.preferred_strip_height(), 2);
 
         // Push 32 strips of 2 rows each
-        let raw = buf.as_view().try_contiguous_bytes().unwrap();
+        let raw = buf.as_view().contiguous_bytes().unwrap();
         let raw = raw.as_ref();
         let row_bytes = 64 * 3;
         for y in (0..64).step_by(2) {
@@ -4445,7 +4439,7 @@ mod tests {
                 64,
                 2,
                 row_bytes,
-                ImageSpec::rgb8_srgb(),
+                &zenpixels::specs::RGB8_SRGB,
             )
             .unwrap();
             encoder.push_rows(strip).unwrap();
@@ -4470,7 +4464,7 @@ mod tests {
         let mut encoder = config.job().with_canvas_size(32, 33).encoder().unwrap();
 
         // Push one row at a time: 16 pairs + 1 leftover
-        let raw = buf.as_view().try_contiguous_bytes().unwrap();
+        let raw = buf.as_view().contiguous_bytes().unwrap();
         let raw = raw.as_ref();
         let row_bytes = 32 * 3;
         for y in 0..33usize {
@@ -4479,7 +4473,7 @@ mod tests {
                 32,
                 1,
                 row_bytes,
-                ImageSpec::rgb8_srgb(),
+                &zenpixels::specs::RGB8_SRGB,
             )
             .unwrap();
             encoder.push_rows(strip).unwrap();
@@ -4500,7 +4494,7 @@ mod tests {
         let mut encoder = config.job().with_canvas_size(16, 16).encoder().unwrap();
         assert_eq!(encoder.preferred_strip_height(), 1);
 
-        let raw = buf.as_view().try_contiguous_bytes().unwrap();
+        let raw = buf.as_view().contiguous_bytes().unwrap();
         let raw = raw.as_ref();
         let row_bytes = 16 * 4;
         for y in 0..16usize {
@@ -4509,7 +4503,7 @@ mod tests {
                 16,
                 1,
                 row_bytes,
-                ImageSpec::rgba8_srgb(),
+                &zenpixels::specs::RGBA8_SRGB,
             )
             .unwrap();
             encoder.push_rows(strip).unwrap();
@@ -4697,7 +4691,7 @@ mod tests {
         }
 
         // Compare pixel-by-pixel
-        let reference = oneshot_buf.try_into_vec::<u8>().unwrap();
+        let reference = oneshot_buf.into_vec::<u8>().unwrap();
         assert_eq!(
             assembled.len(),
             reference.len(),
@@ -4747,12 +4741,12 @@ mod tests {
 
         let mut stream = dec
             .job()
-            .streaming_decoder(Cow::Borrowed(output.data()), &[ImageSpec::rgba8_srgb()])
+            .streaming_decoder(Cow::Borrowed(output.data()), &[ImageSpec::RGBA8_SRGB])
             .unwrap();
         let (y, pixels) = stream.next_batch().unwrap().unwrap();
         assert_eq!(y, 0);
         assert_eq!(pixels.rows(), 8);
-        assert_eq!(pixels.spec(), &ImageSpec::rgba8_srgb());
+        assert_eq!(pixels.spec(), &ImageSpec::RGBA8_SRGB);
         for row in 0..8 {
             assert_eq!(pixels.row(row), buf.as_view().row(row));
         }
@@ -4775,7 +4769,7 @@ mod tests {
             let dec = WebpDecoderConfig::new();
             let mut stream = dec
                 .job()
-                .streaming_decoder(Cow::Borrowed(output.data()), &[ImageSpec::rgba8_srgb()])
+                .streaming_decoder(Cow::Borrowed(output.data()), &[ImageSpec::RGBA8_SRGB])
                 .unwrap();
 
             let info = stream.info();
@@ -4864,7 +4858,7 @@ mod tests {
                 width,
                 height,
                 row_bytes,
-                descriptor,
+                self.descriptor.as_ref().unwrap(),
             )
             .expect("valid slice");
             Ok(slice)
@@ -4903,7 +4897,7 @@ mod tests {
         let width = buf.width();
         let height = buf.height();
         let desc = buf.spec().clone();
-        (buf.try_into_vec::<u8>().unwrap(), width, height, desc)
+        (buf.into_vec::<u8>().unwrap(), width, height, desc)
     }
 
     /// Decode `data` under the given [`AllocPreference`] (via the zencodec
@@ -4924,7 +4918,7 @@ mod tests {
             .decode()
             .unwrap()
             .into_buffer()
-            .try_into_vec::<u8>()
+            .into_vec::<u8>()
             .unwrap()
     }
 
@@ -4995,8 +4989,8 @@ mod tests {
         let cfg = WebpDecoderConfig::new();
         let compute = ComputeEnvironment::default();
 
-        let small = ImageCharacteristics::new(256, 256, ImageSpec::rgba8_srgb());
-        let large = ImageCharacteristics::new(2048, 2048, ImageSpec::rgba8_srgb());
+        let small = ImageCharacteristics::new(256, 256, ImageSpec::RGBA8_SRGB);
+        let large = ImageCharacteristics::new(2048, 2048, ImageSpec::RGBA8_SRGB);
 
         let es = cfg.estimate_decode_resources(&small, &compute);
         let el = cfg.estimate_decode_resources(&large, &compute);
@@ -5053,10 +5047,10 @@ mod tests {
             return;
         }
 
-        let (sink, _info) = push_decode(data, &[ImageSpec::rgba8_srgb()]);
-        let (reference, _, _, rdesc) = full_decode(data, &[ImageSpec::rgba8_srgb()]);
-        assert_eq!(rdesc, ImageSpec::rgba8_srgb());
-        assert_eq!(sink.descriptor, Some(ImageSpec::rgba8_srgb()));
+        let (sink, _info) = push_decode(data, &[ImageSpec::RGBA8_SRGB]);
+        let (reference, _, _, rdesc) = full_decode(data, &[ImageSpec::RGBA8_SRGB]);
+        assert_eq!(rdesc, ImageSpec::RGBA8_SRGB);
+        assert_eq!(sink.descriptor, Some(ImageSpec::RGBA8_SRGB));
         assert_eq!(sink.buf, reference, "alpha strip must match full decode");
     }
 
@@ -5124,10 +5118,10 @@ mod tests {
             return;
         }
 
-        let (sink, _info) = push_decode(data, &[ImageSpec::bgra8_srgb()]);
-        assert_eq!(sink.descriptor, Some(ImageSpec::bgra8_srgb()));
-        let (reference, _, _, rdesc) = full_decode(data, &[ImageSpec::bgra8_srgb()]);
-        assert_eq!(rdesc, ImageSpec::bgra8_srgb());
+        let (sink, _info) = push_decode(data, &[ImageSpec::BGRA8_SRGB]);
+        assert_eq!(sink.descriptor, Some(ImageSpec::BGRA8_SRGB));
+        let (reference, _, _, rdesc) = full_decode(data, &[ImageSpec::BGRA8_SRGB]);
+        assert_eq!(rdesc, ImageSpec::BGRA8_SRGB);
         assert_eq!(sink.buf, reference);
     }
 
@@ -5154,10 +5148,10 @@ mod tests {
             // Corpus layout guarantees _a files have alpha; assert for safety.
             panic!("expected 1_webp_a.webp to have alpha");
         }
-        let (sink, _info) = push_decode(data, &[ImageSpec::rgba8_srgb()]);
-        let (reference, _, _, rdesc) = full_decode(data, &[ImageSpec::rgba8_srgb()]);
-        assert_eq!(rdesc, ImageSpec::rgba8_srgb());
-        assert_eq!(sink.descriptor, Some(ImageSpec::rgba8_srgb()));
+        let (sink, _info) = push_decode(data, &[ImageSpec::RGBA8_SRGB]);
+        let (reference, _, _, rdesc) = full_decode(data, &[ImageSpec::RGBA8_SRGB]);
+        assert_eq!(rdesc, ImageSpec::RGBA8_SRGB);
+        assert_eq!(sink.descriptor, Some(ImageSpec::RGBA8_SRGB));
         assert_eq!(sink.buf, reference, "gallery2/1_webp_a.webp parity");
     }
 
@@ -5177,7 +5171,7 @@ mod tests {
 
     #[test]
     fn gray_cicp_resolves_an_rgb_profile_for_webp_output() {
-        let spec = ImageSpec::gray8_srgb();
+        let spec = ImageSpec::GRAY8_SRGB;
         for layout in [PixelLayout::L8, PixelLayout::La8] {
             let profile = resolve_webp_icc(
                 &spec,
@@ -5197,9 +5191,9 @@ mod tests {
     fn gray_cicp_keeps_pixels_and_rgb_icc_through_encode() {
         for alpha in [false, true] {
             let descriptor = if alpha {
-                ImageSpec::graya8_srgb()
+                ImageSpec::GRAYA8_SRGB
             } else {
-                ImageSpec::gray8_srgb()
+                ImageSpec::GRAY8_SRGB
             };
             let mut buffer = PixelBuf::new(2, 2, descriptor).unwrap();
             let gray = [20_u8, 60, 90, 180];
@@ -5363,7 +5357,7 @@ mod tests {
             // The owned path takes `frame_buf`, so every frame after the
             // first goes through the fallible re-allocation branch.
             while let Some(f) = dec.render_next_frame_owned(None).unwrap() {
-                out.push(f.into_buffer().try_into_vec::<u8>().unwrap());
+                out.push(f.into_buffer().into_vec::<u8>().unwrap());
             }
             out
         };

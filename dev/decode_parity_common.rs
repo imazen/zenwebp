@@ -261,12 +261,12 @@ impl zencodec::decode::DecodeRowSink for CollectSink {
     ) -> Result<zenpixels::PixelViewMut<'_>, zencodec::decode::SinkError> {
         let row = width as usize * descriptor.layout.bytes_per_pixel();
         let start = y as usize * row;
-        zenpixels::PixelViewMut::new(
+        zenpixels::PixelViewMut::new_with_spec_cow(
             &mut self.buf[start..start + height as usize * row],
             width,
             height,
             row,
-            descriptor,
+            zenpixels::SpecCow::from_owned(descriptor),
         )
         .map_err(|x| zencodec::decode::SinkError::from(format!("{x}")))
     }
@@ -277,11 +277,11 @@ impl zencodec::decode::DecodeRowSink for CollectSink {
 
 fn desc_layout(d: zenpixels::ImageSpec) -> Result<&'static str, String> {
     use zenpixels::ImageSpec as P;
-    Ok(if d == P::rgba8_srgb() {
+    Ok(if d == P::RGBA8_SRGB {
         "rgba"
-    } else if d == P::rgb8_srgb() {
+    } else if d == P::RGB8_SRGB {
         "rgb"
-    } else if d == P::bgra8_srgb() {
+    } else if d == P::BGRA8_SRGB {
         "bgra"
     } else {
         return Err(format!("unexpected descriptor {d:?}"));
@@ -392,17 +392,17 @@ pub fn zen_decode(mode: &str, data: &[u8]) -> Out {
             }
             Ok((to_rgba(&tight, layout), w, h))
         }
-        "zc_push_rgba" => zc_push(data, Zc::new(), &[P::rgba8_srgb()]),
-        "zc_push_bgra" => zc_push(data, Zc::new(), &[P::bgra8_srgb()]),
+        "zc_push_rgba" => zc_push(data, Zc::new(), &[P::RGBA8_SRGB]),
+        "zc_push_bgra" => zc_push(data, Zc::new(), &[P::BGRA8_SRGB]),
         "zc_push_nofancy" => zc_push(
             data,
             Zc::new().with_upsampling(UpsamplingMethod::Simple),
-            &[P::rgba8_srgb()],
+            &[P::RGBA8_SRGB],
         ),
         "zc_push_dither100" => zc_push(
             data,
             Zc::new().with_dithering_strength(100),
-            &[P::rgba8_srgb()],
+            &[P::RGBA8_SRGB],
         ),
         "rgba_nofancy" => request(data, simple(), false),
         "rgb_nofancy" => request(data, simple(), true),

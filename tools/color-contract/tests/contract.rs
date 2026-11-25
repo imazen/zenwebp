@@ -5,7 +5,9 @@ use std::sync::Arc;
 
 use zencodec::encode::{AnimationFrameEncoder, EncodeJob, Encoder, EncoderConfig};
 use zencodec::{CodecErrorExt, ErrorCategory, Metadata, MetadataPolicy, RequestError};
-use zenpixels::{AlphaMode, ColorSpace, ImageSpec, PixelView, RenderingIntent, SampleLayout};
+use zenpixels::{
+    AlphaMode, ColorSpace, ImageSpec, PixelView, RenderingIntent, SampleLayout, SpecCow,
+};
 use zenwebp::zencodec::WebpEncoderConfig;
 
 const FIRST: [u8; 18] = [
@@ -16,7 +18,14 @@ const SECOND: [u8; 18] = [
 ];
 
 fn rgb(bytes: &[u8], color: ColorSpace) -> PixelView<'_> {
-    PixelView::from_packed(bytes, 3, 2, ImageSpec::new(SampleLayout::RGB8, color)).unwrap()
+    PixelView::new_with_spec_cow(
+        bytes,
+        3,
+        2,
+        9,
+        SpecCow::from_owned(ImageSpec::new(SampleLayout::RGB8, color)),
+    )
+    .unwrap()
 }
 
 fn cms_required(error: &(dyn std::error::Error + 'static)) {

@@ -73,7 +73,7 @@ fn fixture_with_orientation(orientation: u16) -> Vec<u8> {
 /// Read an RGB pixel from a decoded RGB8 output.
 fn px(out: &zencodec::decode::DecodeOutput, x: u32, y: u32) -> [u8; 3] {
     let ps = out.pixels();
-    assert_eq!(ps.spec(), &ImageSpec::rgb8_srgb());
+    assert_eq!(ps.spec(), &ImageSpec::RGB8_SRGB);
     let row = ps.row(y);
     let off = x as usize * 3;
     [row[off], row[off + 1], row[off + 2]]
@@ -108,7 +108,7 @@ fn orientation_preserve_decode_keeps_stored_pixels() {
     let data = fixture_with_orientation(6);
     let out = WebpDecoderConfig::new()
         .job()
-        .decoder(Cow::Borrowed(&data), &[ImageSpec::rgb8_srgb()])
+        .decoder(Cow::Borrowed(&data), &[ImageSpec::RGB8_SRGB])
         .expect("decoder")
         .decode()
         .expect("decode");
@@ -164,7 +164,7 @@ fn orientation_correct_decode_bakes_upright_pixels() {
     let out = WebpDecoderConfig::new()
         .job()
         .with_orientation(OrientationHint::Correct)
-        .decoder(Cow::Borrowed(&data), &[ImageSpec::rgb8_srgb()])
+        .decoder(Cow::Borrowed(&data), &[ImageSpec::RGB8_SRGB])
         .expect("decoder")
         .decode()
         .expect("decode");
@@ -217,7 +217,7 @@ fn orientation_correct_on_upright_image_is_noop_but_reports_identity() {
     let out = WebpDecoderConfig::new()
         .job()
         .with_orientation(OrientationHint::Correct)
-        .decoder(Cow::Borrowed(&data), &[ImageSpec::rgb8_srgb()])
+        .decoder(Cow::Borrowed(&data), &[ImageSpec::RGB8_SRGB])
         .expect("decoder")
         .decode()
         .expect("decode");
@@ -240,7 +240,7 @@ fn orientation_exact_transform_ignores_exif() {
     let out = WebpDecoderConfig::new()
         .job()
         .with_orientation(OrientationHint::ExactTransform(Orientation::FlipH))
-        .decoder(Cow::Borrowed(&data), &[ImageSpec::rgb8_srgb()])
+        .decoder(Cow::Borrowed(&data), &[ImageSpec::RGB8_SRGB])
         .expect("decoder")
         .decode()
         .expect("decode");
@@ -267,7 +267,7 @@ fn baked_orientation_retains_icc_origin_and_source_encoding() {
     let out = WebpDecoderConfig::new()
         .job()
         .with_orientation(OrientationHint::CorrectAndTransform(Orientation::Rotate180))
-        .decoder(Cow::Borrowed(&data), &[ImageSpec::rgb8_srgb()])
+        .decoder(Cow::Borrowed(&data), &[ImageSpec::RGB8_SRGB])
         .unwrap()
         .decode()
         .unwrap();
@@ -312,7 +312,7 @@ fn animation_encode_serializes_structured_orientation() {
         .animation_frame_encoder()
         .unwrap();
     for bytes in [[20, 40, 60, 80, 100, 120], [121, 101, 81, 61, 41, 21]] {
-        let view = PixelView::from_packed(&bytes, 2, 1, ImageSpec::rgb8_srgb()).unwrap();
+        let view = PixelView::from_bytes(&bytes, 2, 1, &zenpixels::specs::RGB8_SRGB).unwrap();
         encoder.push_frame(view, 15, None).unwrap();
     }
     let output = encoder.finish(None).unwrap();
@@ -390,9 +390,13 @@ fn true_animation_applies_orientation_at_all_delivery_boundaries() {
         .animation_frame_encoder()
         .unwrap();
     for (pixels, duration) in sources.iter().zip([17, 29]) {
-        let view =
-            zenpixels::PixelView::from_packed(pixels.as_flattened(), 3, 2, ImageSpec::rgba8_srgb())
-                .unwrap();
+        let view = zenpixels::PixelView::from_bytes(
+            pixels.as_flattened(),
+            3,
+            2,
+            &zenpixels::specs::RGBA8_SRGB,
+        )
+        .unwrap();
         encoder
             .push_frame_timed(view, FrameDuration::from_millis(duration), None)
             .unwrap();

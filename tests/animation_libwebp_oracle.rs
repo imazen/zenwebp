@@ -27,7 +27,7 @@ fn frame(seed: u8) -> PixelBuf {
             [i.wrapping_mul(7) ^ seed, seed.wrapping_add(i), 255 - i, 255]
         })
         .collect();
-    PixelBuf::from_bytes(px, 8, 8, ImageSpec::rgba8_srgb()).unwrap()
+    PixelBuf::from_bytes(px, 8, 8, ImageSpec::RGBA8_SRGB).unwrap()
 }
 
 /// libwebp frame durations: differences of `WebPAnimDecoderGetNext`'s end
@@ -171,7 +171,7 @@ fn animation_decode_matches_libwebp_and_keeps_icc() {
         .unwrap();
     let mut dec = WebpDecoderConfig::new()
         .job()
-        .animation_frame_decoder(Cow::Borrowed(&data), &[ImageSpec::rgba8_srgb()])
+        .animation_frame_decoder(Cow::Borrowed(&data), &[ImageSpec::RGBA8_SRGB])
         .unwrap();
     let durations = libwebp_durations(&lib);
     assert_eq!(durations, [40, 60]);
