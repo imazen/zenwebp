@@ -707,7 +707,7 @@ pub mod zencodec
 pub struct zencodec::WebpAnimationFrameDecoder
 pub struct zencodec::WebpAnimationFrameEncoder
 pub struct zencodec::WebpDecodeJob
-pub fn zencodec::WebpDecodeJob::with_preferred(self, &[zenpixels::color::ImageSpec]) -> Self
+pub fn zencodec::WebpDecodeJob::with_preferred(self, &[zenpixels::color::PixelFormat]) -> Self
 pub struct zencodec::WebpDecoder<'a>
 pub struct zencodec::WebpDecoderConfig
 pub fn zencodec::WebpDecoderConfig::decode(&self, &[u8]) -> core::result::Result<zencodec::output::DecodeOutput, whereat::at::At<zencodec::error::CodecError>>

@@ -14,8 +14,14 @@ use zenwebp::zencodec::{WebpDecoderConfig, WebpEncoderConfig};
 fn valid_webp() -> Vec<u8> {
     let (w, h) = (8u32, 8u32);
     let bytes = vec![0x77u8; (w * h * 3) as usize];
-    let slice = PixelView::new(&bytes, w, h, (w * 3) as usize, &zenpixels::specs::RGB8_SRGB)
-        .expect("rgb8 slice");
+    let slice = PixelView::new(
+        &bytes,
+        w,
+        h,
+        (w * 3) as usize,
+        &zenpixels::formats::RGB8_SRGB,
+    )
+    .expect("rgb8 slice");
     WebpEncoderConfig::lossless()
         .job()
         .encoder()

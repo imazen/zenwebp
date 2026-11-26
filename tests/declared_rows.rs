@@ -1,6 +1,6 @@
 #![cfg(not(target_arch = "wasm32"))]
 use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
-use zenpixels::{ImageSpec, PixelView};
+use zenpixels::{PixelFormat, PixelView};
 use zenwebp::zencodec::WebpEncoderConfig;
 
 #[test]
@@ -12,7 +12,7 @@ fn declared_rows_preserve_strided_pixels_and_protocol() {
     .into_iter()
     .enumerate()
     {
-        let desc = ImageSpec::RGB8_SRGB;
+        let desc = PixelFormat::RGB8_SRGB;
         for stride in [15, 18, 24] {
             let (w, h) = (5, 4);
             let mut bytes = vec![199; stride * h as usize];
@@ -113,14 +113,14 @@ fn shared_streaming_conformance_exercises_declared_webp_rows() {
 fn begin_accepts_a_supported_webp_canvas() {
     let mut encoder = WebpEncoderConfig::lossless().job().encoder().unwrap();
     assert_eq!(
-        encoder.begin(5, 4, ImageSpec::RGB8_SRGB).unwrap(),
+        encoder.begin(5, 4, PixelFormat::RGB8_SRGB).unwrap(),
         zencodec::encode::OutputTiming::AT_FINISH,
     );
 }
 
 #[test]
 fn legacy_rows_do_not_encode_padding_as_samples() {
-    let desc = ImageSpec::RGB8_SRGB;
+    let desc = PixelFormat::RGB8_SRGB;
     let packed: Vec<u8> = (0..60).map(|i| (i * 3) as u8).collect();
     let mut padded = vec![199; 96];
     for y in 0..4 {

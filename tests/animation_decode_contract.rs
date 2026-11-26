@@ -7,11 +7,11 @@ use std::{
 };
 use zencodec::decode::{AnimationFrameDecoder, DecodeJob, DecoderConfig};
 use zencodec::encode::{AnimationFrameEncoder, EncodeJob, EncoderConfig};
-use zenpixels::{ImageSpec, PixelBuf};
+use zenpixels::{PixelBuf, PixelFormat};
 use zenwebp::zencodec::{WebpDecoderConfig, WebpEncoderConfig};
 
 fn view_icc<'a>(view: &'a zenpixels::PixelView<'_>) -> Option<&'a [u8]> {
-    match &view.spec().color {
+    match &view.format().color {
         zenpixels::ColorSpace::Icc { profile, .. } => Some(profile),
         _ => None,
     }
@@ -28,7 +28,7 @@ fn encode(lossy: bool, icc: bool) -> Vec<u8> {
             }
         })
         .collect();
-    let pixels = PixelBuf::from_bytes(data, 128, 256, ImageSpec::RGBA8_SRGB).unwrap();
+    let pixels = PixelBuf::from_bytes(data, 128, 256, PixelFormat::RGBA8_SRGB).unwrap();
     let config = if lossy {
         WebpEncoderConfig::lossy()
     } else {
@@ -166,7 +166,7 @@ fn still_decoder_views_keep_icc_context_and_bgra_pixels() {
     let data: Vec<_> = (0..17 * 19 * 4)
         .map(|i| ((i * 73 + i / 11) % 255) as u8)
         .collect();
-    let pixels = PixelBuf::from_bytes(data, 17, 19, ImageSpec::RGBA8_SRGB).unwrap();
+    let pixels = PixelBuf::from_bytes(data, 17, 19, PixelFormat::RGBA8_SRGB).unwrap();
     let icc = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
     for lossy in [false, true] {
         let config = if lossy {
@@ -205,7 +205,11 @@ fn still_decoder_views_keep_icc_context_and_bgra_pixels() {
                 }
             };
             for bgra in [false, true] {
-                let preferred: &[ImageSpec] = if bgra { &[ImageSpec::BGRA8_SRGB] } else { &[] };
+                let preferred: &[PixelFormat] = if bgra {
+                    &[PixelFormat::BGRA8_SRGB]
+                } else {
+                    &[]
+                };
                 let decoded = job()
                     .decoder(Cow::Borrowed(output.data()), preferred)
                     .unwrap()
@@ -222,7 +226,7 @@ fn still_decoder_views_keep_icc_context_and_bgra_pixels() {
                     expected
                 );
                 let view = decoded.pixels();
-                let descriptor = view.spec();
+                let descriptor = view.format();
                 let primaries = match &descriptor.color {
                     zenpixels::ColorSpace::Icc { profile, .. } => {
                         zenpixels::icc::IccIdentification::from_icc(profile)
@@ -248,7 +252,7 @@ fn still_decoder_views_keep_icc_context_and_bgra_pixels() {
                     );
                 }
                 let check = |view: &zenpixels::PixelView<'_>| {
-                    assert_eq!(view.spec(), descriptor);
+                    assert_eq!(view.format(), descriptor);
                     assert_eq!(view_icc(view), (!deny_icc).then_some(icc));
                 };
                 check(&decoded.pixels());

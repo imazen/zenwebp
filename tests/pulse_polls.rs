@@ -27,7 +27,7 @@ use zencodec::decode::{
 use zencodec::encode::{
     AnimationFrameEncoder as _, EncodeJob as _, Encoder as _, EncoderConfig as _,
 };
-use zenpixels::{ImageSpec, PixelBuf, PixelViewMut};
+use zenpixels::{PixelBuf, PixelFormat, PixelViewMut};
 use zenwebp::mux::{AnimationConfig, AnimationEncoder};
 use zenwebp::zencodec::{WebpDecodeJob, WebpDecoderConfig, WebpEncodeJob, WebpEncoderConfig};
 use zenwebp::{EncodeRequest, EncoderConfig, PixelLayout};
@@ -49,7 +49,7 @@ fn pattern(w: u32, h: u32, seed: u32) -> Vec<u8> {
 }
 
 fn frame(w: u32, h: u32, seed: u32) -> PixelBuf {
-    PixelBuf::from_bytes(pattern(w, h, seed), w, h, ImageSpec::RGBA8_SRGB).unwrap()
+    PixelBuf::from_bytes(pattern(w, h, seed), w, h, PixelFormat::RGBA8_SRGB).unwrap()
 }
 
 fn still(cfg: &EncoderConfig, w: u32, h: u32) -> Vec<u8> {
@@ -188,16 +188,16 @@ impl DecodeRowSink for Rows {
         _y: u32,
         height: u32,
         width: u32,
-        descriptor: ImageSpec,
+        descriptor: PixelFormat,
     ) -> Result<PixelViewMut<'_>, zencodec::decode::SinkError> {
         let stride = width as usize * descriptor.layout.bytes_per_pixel();
         self.buf.resize(height as usize * stride, 0);
-        Ok(PixelViewMut::new_with_spec_cow(
+        Ok(PixelViewMut::new_with_format_cow(
             &mut self.buf,
             width,
             height,
             stride,
-            zenpixels::SpecCow::from_owned(descriptor),
+            zenpixels::FormatCow::from_owned(descriptor),
         )
         .unwrap())
     }

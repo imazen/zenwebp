@@ -14,7 +14,7 @@ use zencodec::decode::{AnimationFrameDecoder as _, DecodeJob as _, DecoderConfig
 use zencodec::encode::{
     AnimationFrameEncoder as _, EncodeJob as _, Encoder as _, EncoderConfig as _,
 };
-use zenpixels::{ImageSpec, PixelBuf};
+use zenpixels::{PixelBuf, PixelFormat};
 use zenwebp::zencodec::{WebpDecoderConfig, WebpEncoderConfig};
 
 const EXIF: &[u8] = b"Exif\0\0oracle-exif";
@@ -27,7 +27,7 @@ fn frame(seed: u8) -> PixelBuf {
             [i.wrapping_mul(7) ^ seed, seed.wrapping_add(i), 255 - i, 255]
         })
         .collect();
-    PixelBuf::from_bytes(px, 8, 8, ImageSpec::RGBA8_SRGB).unwrap()
+    PixelBuf::from_bytes(px, 8, 8, PixelFormat::RGBA8_SRGB).unwrap()
 }
 
 /// libwebp frame durations: differences of `WebPAnimDecoderGetNext`'s end
@@ -171,7 +171,7 @@ fn animation_decode_matches_libwebp_and_keeps_icc() {
         .unwrap();
     let mut dec = WebpDecoderConfig::new()
         .job()
-        .animation_frame_decoder(Cow::Borrowed(&data), &[ImageSpec::RGBA8_SRGB])
+        .animation_frame_decoder(Cow::Borrowed(&data), &[PixelFormat::RGBA8_SRGB])
         .unwrap();
     let durations = libwebp_durations(&lib);
     assert_eq!(durations, [40, 60]);
@@ -179,7 +179,7 @@ fn animation_decode_matches_libwebp_and_keeps_icc() {
         let f = dec.render_next_frame(None).unwrap().unwrap();
         let px = f.pixels();
         assert_eq!(f.duration(), FrameDuration::from_millis(durations[i]));
-        let zenpixels::ColorSpace::Icc { profile, .. } = &px.spec().color else {
+        let zenpixels::ColorSpace::Icc { profile, .. } = &px.format().color else {
             panic!("frame carries an active ICC profile")
         };
         assert_eq!(profile.as_ref(), icc, "frame {i} ICC");

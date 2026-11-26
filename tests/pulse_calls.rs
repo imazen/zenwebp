@@ -16,7 +16,7 @@ use zencodec::decode::{
     AnimationFrameDecoder as _, DecodeJob as _, DecodeRowSink, DecoderConfig as _,
 };
 use zencodec::encode::{AnimationFrameEncoder as _, EncodeJob as _, EncoderConfig as _};
-use zenpixels::{ImageSpec, PixelBuf, PixelViewMut};
+use zenpixels::{PixelBuf, PixelFormat, PixelViewMut};
 use zenwebp::mux::{AnimationConfig, AnimationEncoder};
 use zenwebp::zencodec::{WebpAnimationFrameDecoder, WebpAnimationFrameEncoder};
 use zenwebp::zencodec::{WebpDecoderConfig, WebpEncoderConfig};
@@ -118,7 +118,7 @@ type Call = fn(
 
 #[test]
 fn call_and_job_pulses_each_stop_the_animation_encoder() {
-    let px = PixelBuf::from_bytes(pattern(32, 24, 9), 32, 24, ImageSpec::RGBA8_SRGB).unwrap();
+    let px = PixelBuf::from_bytes(pattern(32, 24, 9), 32, 24, PixelFormat::RGBA8_SRGB).unwrap();
     let calls: [(&str, Call); 3] = [
         ("push_frame", |e, px, p| {
             e.push_frame(px.as_view(), 20, p).map_err(category)
@@ -183,17 +183,17 @@ impl DecodeRowSink for Rows {
         _y: u32,
         height: u32,
         width: u32,
-        descriptor: ImageSpec,
+        descriptor: PixelFormat,
     ) -> Result<PixelViewMut<'_>, zencodec::decode::SinkError> {
         let stride = width as usize * descriptor.layout.bytes_per_pixel();
         self.buf.resize(height as usize * stride, 0);
         self.rows += height;
-        Ok(PixelViewMut::new_with_spec_cow(
+        Ok(PixelViewMut::new_with_format_cow(
             &mut self.buf,
             width,
             height,
             stride,
-            zenpixels::SpecCow::from_owned(descriptor),
+            zenpixels::FormatCow::from_owned(descriptor),
         )
         .unwrap())
     }

@@ -7,7 +7,7 @@ use zencodec::{
     decode::{AnimationFrameDecoder, Decode, DecodeJob, DecoderConfig},
     encode::{AnimationFrameEncoder, EncodeJob, EncoderConfig as _},
 };
-use zenpixels::{ImageSpec, PixelBuf};
+use zenpixels::{PixelBuf, PixelFormat};
 use zenwebp::{
     EncoderConfig, PixelLayout,
     mux::{AnimationConfig, AnimationDecoder, AnimationEncoder},
@@ -89,7 +89,7 @@ fn bench(suite: &mut Suite) {
                     let offset = ((row + i * 8) * info.width as usize + i * 16) * 3;
                     data.extend_from_slice(&photo[offset..offset + 256 * 3]);
                 }
-                PixelBuf::from_bytes(data, 256, 256, ImageSpec::RGB8_SRGB).unwrap()
+                PixelBuf::from_bytes(data, 256, 256, PixelFormat::RGB8_SRGB).unwrap()
             })
             .collect(),
     );

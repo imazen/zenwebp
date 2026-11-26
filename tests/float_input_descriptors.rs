@@ -16,7 +16,7 @@
 #![cfg(all(feature = "std", not(target_arch = "wasm32")))]
 
 use zencodec::encode::{EncodeJob, Encoder, EncoderConfig as _};
-use zenpixels::{ImageSpec, PixelView};
+use zenpixels::{PixelFormat, PixelView};
 use zenwebp::zencodec::WebpEncoderConfig;
 
 const W: u32 = 64;
@@ -70,22 +70,22 @@ fn floats_as_bytes(f: &[f32]) -> Vec<u8> {
 #[test]
 fn supported_descriptors_includes_floats() {
     use zencodec::encode::EncoderConfig;
-    let descs: &[ImageSpec] = WebpEncoderConfig::supported_descriptors();
+    let descs: &[PixelFormat] = WebpEncoderConfig::supported_descriptors();
     assert!(
-        descs.contains(&ImageSpec::RGBF32_LINEAR),
+        descs.contains(&PixelFormat::RGBF32_LINEAR),
         "RGBF32_LINEAR not advertised; descriptors = {descs:?}"
     );
     assert!(
-        descs.contains(&ImageSpec::RGBAF32_LINEAR),
+        descs.contains(&PixelFormat::RGBAF32_LINEAR),
         "RGBAF32_LINEAR not advertised; descriptors = {descs:?}"
     );
     assert!(
-        descs.contains(&ImageSpec::GRAYF32_LINEAR),
+        descs.contains(&PixelFormat::GRAYF32_LINEAR),
         "GRAYF32_LINEAR not advertised; descriptors = {descs:?}"
     );
 }
 
-fn encode_roundtrip(pixels_bytes: &[u8], descriptor: ImageSpec, lossless: bool) -> Vec<u8> {
+fn encode_roundtrip(pixels_bytes: &[u8], descriptor: PixelFormat, lossless: bool) -> Vec<u8> {
     let cfg = if lossless {
         WebpEncoderConfig::lossless().with_exact(true)
     } else {
@@ -120,7 +120,7 @@ fn linear_f32_to_srgb_u8(v: f32) -> u8 {
 fn rgbf32_lossless_roundtrip() {
     let f = linear_gradient_rgb_f32(3);
     let bytes = floats_as_bytes(&f);
-    let decoded = encode_roundtrip(&bytes, ImageSpec::RGBF32_LINEAR, true);
+    let decoded = encode_roundtrip(&bytes, PixelFormat::RGBF32_LINEAR, true);
 
     for (i, px) in decoded.as_chunks::<4>().0.iter().enumerate() {
         let r_lin = f[i * 3];
@@ -143,7 +143,7 @@ fn rgbf32_lossless_roundtrip() {
 fn rgbaf32_lossless_roundtrip() {
     let f = linear_gradient_rgb_f32(4);
     let bytes = floats_as_bytes(&f);
-    let decoded = encode_roundtrip(&bytes, ImageSpec::RGBAF32_LINEAR, true);
+    let decoded = encode_roundtrip(&bytes, PixelFormat::RGBAF32_LINEAR, true);
 
     for (i, px) in decoded.as_chunks::<4>().0.iter().enumerate() {
         let r_lin = f[i * 4];
@@ -170,7 +170,7 @@ fn rgbaf32_lossless_roundtrip() {
 fn grayf32_lossless_roundtrip() {
     let f = gray_gradient_f32();
     let bytes = floats_as_bytes(&f);
-    let decoded = encode_roundtrip(&bytes, ImageSpec::GRAYF32_LINEAR, true);
+    let decoded = encode_roundtrip(&bytes, PixelFormat::GRAYF32_LINEAR, true);
 
     for (i, px) in decoded.as_chunks::<4>().0.iter().enumerate() {
         let g_lin = f[i];
@@ -187,7 +187,7 @@ fn grayf32_lossless_roundtrip() {
 fn rgbf32_lossy_roundtrip_within_tolerance() {
     let f = linear_gradient_rgb_f32(3);
     let bytes = floats_as_bytes(&f);
-    let decoded = encode_roundtrip(&bytes, ImageSpec::RGBF32_LINEAR, false);
+    let decoded = encode_roundtrip(&bytes, PixelFormat::RGBF32_LINEAR, false);
 
     let mut max_rgb = 0i32;
     for (i, px) in decoded.as_chunks::<4>().0.iter().enumerate() {
@@ -209,7 +209,7 @@ fn rgbf32_lossy_roundtrip_within_tolerance() {
 fn rgbaf32_lossy_roundtrip_within_tolerance() {
     let f = linear_gradient_rgb_f32(4);
     let bytes = floats_as_bytes(&f);
-    let decoded = encode_roundtrip(&bytes, ImageSpec::RGBAF32_LINEAR, false);
+    let decoded = encode_roundtrip(&bytes, PixelFormat::RGBAF32_LINEAR, false);
 
     let mut max_rgb = 0i32;
     let mut max_alpha = 0i32;
@@ -237,7 +237,7 @@ fn rgbaf32_lossy_roundtrip_within_tolerance() {
 fn grayf32_lossy_roundtrip_within_tolerance() {
     let f = gray_gradient_f32();
     let bytes = floats_as_bytes(&f);
-    let decoded = encode_roundtrip(&bytes, ImageSpec::GRAYF32_LINEAR, false);
+    let decoded = encode_roundtrip(&bytes, PixelFormat::GRAYF32_LINEAR, false);
 
     let mut max_split = 0i32;
     let mut max_y = 0i32;
@@ -275,7 +275,7 @@ fn a_linear_cicp_on_f32_input_is_written_as_srgb() {
         W,
         H,
         W as usize * 12,
-        &zenpixels::specs::RGBF32_LINEAR,
+        &zenpixels::formats::RGBF32_LINEAR,
     )
     .unwrap();
     let out = WebpEncoderConfig::lossless()

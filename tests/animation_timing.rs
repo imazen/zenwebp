@@ -13,8 +13,9 @@ fn ordinary_timing_and_exact_admission_match_encoded_frames() {
     let mut expected = Vec::new();
     for index in 0..30 {
         let bytes = [index * 7, 40, 60].repeat(256);
-        let pixels =
-            || zenpixels::PixelView::new(&bytes, 16, 16, 48, &zenpixels::specs::RGB8_SRGB).unwrap();
+        let pixels = || {
+            zenpixels::PixelView::new(&bytes, 16, 16, 48, &zenpixels::formats::RGB8_SRGB).unwrap()
+        };
         if index == 0 {
             assert!(
                 encoder
@@ -67,7 +68,7 @@ fn cumulative_timestamp_overflow_rejects_before_acceptance() {
         .unwrap();
     let bytes = [20, 40, 60];
     let pixels =
-        || zenpixels::PixelView::new(&bytes, 1, 1, 3, &zenpixels::specs::RGB8_SRGB).unwrap();
+        || zenpixels::PixelView::new(&bytes, 1, 1, 3, &zenpixels::formats::RGB8_SRGB).unwrap();
     let maximum = FrameDuration::from_millis(0x00ff_ffff);
     for _ in 0..256 {
         encoder.push_frame_exact(pixels(), maximum, None).unwrap();
@@ -112,12 +113,12 @@ mod native_contract {
     use zencodec::animation::FrameDuration;
     use zencodec::decode::{AnimationFrameDecoder, DecodeJob, DecoderConfig};
     use zencodec::encode::{AnimationFrameEncoder, EncodeJob, EncoderConfig};
-    use zenpixels::{ImageSpec, PixelBuf};
+    use zenpixels::{PixelBuf, PixelFormat};
     use zenwebp::mux::{AnimationConfig, AnimationDecoder, AnimationEncoder, WebPDemuxer};
     use zenwebp::zencodec::{WebpDecoderConfig, WebpEncoderConfig};
 
     fn pixels() -> PixelBuf {
-        PixelBuf::from_bytes([12, 34, 56, 255].repeat(4), 2, 2, ImageSpec::RGBA8_SRGB).unwrap()
+        PixelBuf::from_bytes([12, 34, 56, 255].repeat(4), 2, 2, PixelFormat::RGBA8_SRGB).unwrap()
     }
 
     /// One pushed frame is written as a still image whatever its duration
@@ -178,7 +179,7 @@ mod native_contract {
         for ms in [7, 9] {
             encoder
                 .push_frame_exact(
-                    zenpixels::PixelView::new(&padded, 2, 2, 12, &zenpixels::specs::RGBA8_SRGB)
+                    zenpixels::PixelView::new(&padded, 2, 2, 12, &zenpixels::formats::RGBA8_SRGB)
                         .unwrap(),
                     FrameDuration::from_millis(ms),
                     None,
@@ -360,7 +361,7 @@ mod native_contract {
                 .with_metadata_policy(metadata, zencodec::MetadataPolicy::PreserveExact)
                 .animation_frame_encoder()
                 .unwrap();
-            let spec = ImageSpec::new(
+            let spec = PixelFormat::new(
                 zenpixels::SampleLayout::RGBA8,
                 zenpixels::ColorSpace::DISPLAY_P3_ALPHA,
             );
@@ -410,7 +411,7 @@ mod native_contract {
             .animation_frame_encoder()
             .unwrap();
         encoder.push_frame(pixels.as_view(), 10, None).unwrap();
-        let mismatch = PixelBuf::from_bytes(vec![0; 4], 1, 1, ImageSpec::RGBA8_SRGB).unwrap();
+        let mismatch = PixelBuf::from_bytes(vec![0; 4], 1, 1, PixelFormat::RGBA8_SRGB).unwrap();
         assert!(encoder.push_frame(mismatch.as_view(), 20, None).is_err());
         let output = encoder.finish(None).unwrap();
         assert_eq!(WebPDemuxer::new(output.data()).unwrap().frames().count(), 1);
@@ -435,7 +436,7 @@ mod native_contract {
         let data: Vec<_> = (0..64 * 64 * 4)
             .map(|i| ((i * 37 + i / 5 * 113) % 256) as u8)
             .collect();
-        let pixels = PixelBuf::from_bytes(data, 64, 64, ImageSpec::RGBA8_SRGB).unwrap();
+        let pixels = PixelBuf::from_bytes(data, 64, 64, PixelFormat::RGBA8_SRGB).unwrap();
         for job_stop in [false, true] {
             let calls = Arc::new(AtomicUsize::new(0));
             let mut job = WebpEncoderConfig::lossless().job();

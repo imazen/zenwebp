@@ -17,7 +17,7 @@ use std::borrow::Cow;
 
 use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
 use zencodec::{Orientation, OrientationHint};
-use zenpixels::ImageSpec;
+use zenpixels::PixelFormat;
 use zenwebp::zencodec::WebpDecoderConfig;
 use zenwebp::{EncodeRequest, LosslessConfig, PixelLayout};
 
@@ -73,7 +73,7 @@ fn fixture_with_orientation(orientation: u16) -> Vec<u8> {
 /// Read an RGB pixel from a decoded RGB8 output.
 fn px(out: &zencodec::decode::DecodeOutput, x: u32, y: u32) -> [u8; 3] {
     let ps = out.pixels();
-    assert_eq!(ps.spec(), &ImageSpec::RGB8_SRGB);
+    assert_eq!(ps.format(), &PixelFormat::RGB8_SRGB);
     let row = ps.row(y);
     let off = x as usize * 3;
     [row[off], row[off + 1], row[off + 2]]
@@ -108,7 +108,7 @@ fn orientation_preserve_decode_keeps_stored_pixels() {
     let data = fixture_with_orientation(6);
     let out = WebpDecoderConfig::new()
         .job()
-        .decoder(Cow::Borrowed(&data), &[ImageSpec::RGB8_SRGB])
+        .decoder(Cow::Borrowed(&data), &[PixelFormat::RGB8_SRGB])
         .expect("decoder")
         .decode()
         .expect("decode");
@@ -164,7 +164,7 @@ fn orientation_correct_decode_bakes_upright_pixels() {
     let out = WebpDecoderConfig::new()
         .job()
         .with_orientation(OrientationHint::Correct)
-        .decoder(Cow::Borrowed(&data), &[ImageSpec::RGB8_SRGB])
+        .decoder(Cow::Borrowed(&data), &[PixelFormat::RGB8_SRGB])
         .expect("decoder")
         .decode()
         .expect("decode");
@@ -217,7 +217,7 @@ fn orientation_correct_on_upright_image_is_noop_but_reports_identity() {
     let out = WebpDecoderConfig::new()
         .job()
         .with_orientation(OrientationHint::Correct)
-        .decoder(Cow::Borrowed(&data), &[ImageSpec::RGB8_SRGB])
+        .decoder(Cow::Borrowed(&data), &[PixelFormat::RGB8_SRGB])
         .expect("decoder")
         .decode()
         .expect("decode");
@@ -240,7 +240,7 @@ fn orientation_exact_transform_ignores_exif() {
     let out = WebpDecoderConfig::new()
         .job()
         .with_orientation(OrientationHint::ExactTransform(Orientation::FlipH))
-        .decoder(Cow::Borrowed(&data), &[ImageSpec::RGB8_SRGB])
+        .decoder(Cow::Borrowed(&data), &[PixelFormat::RGB8_SRGB])
         .expect("decoder")
         .decode()
         .expect("decode");
@@ -267,7 +267,7 @@ fn baked_orientation_retains_icc_origin_and_source_encoding() {
     let out = WebpDecoderConfig::new()
         .job()
         .with_orientation(OrientationHint::CorrectAndTransform(Orientation::Rotate180))
-        .decoder(Cow::Borrowed(&data), &[ImageSpec::RGB8_SRGB])
+        .decoder(Cow::Borrowed(&data), &[PixelFormat::RGB8_SRGB])
         .unwrap()
         .decode()
         .unwrap();
@@ -279,12 +279,12 @@ fn baked_orientation_retains_icc_origin_and_source_encoding() {
     let view = out.pixels();
     let zenpixels::ColorSpace::Icc {
         profile: active, ..
-    } = &view.spec().color
+    } = &view.format().color
     else {
         panic!("missing active RGB ICC");
     };
     assert_eq!(active.as_ref(), profile);
-    assert_eq!(view.spec().layout, zenpixels::SampleLayout::RGBA8);
+    assert_eq!(view.format().layout, zenpixels::SampleLayout::RGBA8);
     let (sw, sh) = STORED;
     for y in 0..sh {
         for x in 0..sw {
@@ -312,7 +312,7 @@ fn animation_encode_serializes_structured_orientation() {
         .animation_frame_encoder()
         .unwrap();
     for bytes in [[20, 40, 60, 80, 100, 120], [121, 101, 81, 61, 41, 21]] {
-        let view = PixelView::from_bytes(&bytes, 2, 1, &zenpixels::specs::RGB8_SRGB).unwrap();
+        let view = PixelView::from_bytes(&bytes, 2, 1, &zenpixels::formats::RGB8_SRGB).unwrap();
         encoder.push_frame(view, 15, None).unwrap();
     }
     let output = encoder.finish(None).unwrap();
@@ -349,11 +349,11 @@ fn assert_frame_pixels(
     profile: &[u8],
 ) {
     assert_eq!((view.width(), view.rows()), dims);
-    assert_eq!(view.spec().layout, zenpixels::SampleLayout::RGBA8);
+    assert_eq!(view.format().layout, zenpixels::SampleLayout::RGBA8);
     assert_eq!(view.origin().unwrap().icc.as_deref(), Some(profile));
     let zenpixels::ColorSpace::Icc {
         profile: active, ..
-    } = &view.spec().color
+    } = &view.format().color
     else {
         panic!("missing active ICC");
     };
@@ -394,7 +394,7 @@ fn true_animation_applies_orientation_at_all_delivery_boundaries() {
             pixels.as_flattened(),
             3,
             2,
-            &zenpixels::specs::RGBA8_SRGB,
+            &zenpixels::formats::RGBA8_SRGB,
         )
         .unwrap();
         encoder

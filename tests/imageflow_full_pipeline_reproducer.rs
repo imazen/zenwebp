@@ -5,7 +5,7 @@
 #![cfg(all(feature = "std", not(target_arch = "wasm32")))]
 
 use zencodec::encode::DynEncoderConfig as _;
-use zenpixels::{ImageSpec, PixelView};
+use zenpixels::{PixelFormat, PixelView};
 
 fn rgba_to_bgra_inplace(bytes: &mut [u8]) {
     for p in bytes.as_chunks_mut::<4>().0.iter_mut() {
@@ -43,7 +43,7 @@ fn reencode_rose_lossless_bgra_dispatch() {
     let config = zenwebp::zencodec::WebpEncoderConfig::lossless().with_quality(85.0);
     let job = config.dyn_job();
     let encoder = job.into_encoder().expect("into_encoder");
-    let desc = ImageSpec::BGRA8_SRGB;
+    let desc = PixelFormat::BGRA8_SRGB;
     let stride = w as usize * 4;
     let ps = PixelView::new(&bgra, w, h, stride, &desc).expect("bgra pixel slice");
     let output = encoder.encode(ps).expect("encode bgra");

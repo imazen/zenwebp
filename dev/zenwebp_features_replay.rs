@@ -79,7 +79,7 @@ fn feature_value_str(
 
 fn load_png_rgb8(path: &PathBuf) -> Option<(Vec<u8>, u32, u32)> {
     use enough::Unstoppable;
-    use zenpixels::ImageSpec;
+    use zenpixels::PixelFormat;
     use zenpixels_convert::{ConvertPolicy, convert_to_buf};
     use zenpng::PngDecodeConfig;
 
@@ -90,7 +90,7 @@ fn load_png_rgb8(path: &PathBuf) -> Option<(Vec<u8>, u32, u32)> {
 
     let rgb_buf = convert_to_buf(
         &output.pixels.as_view(),
-        ImageSpec::RGB8_SRGB,
+        PixelFormat::RGB8_SRGB,
         &ConvertPolicy::working_linear(),
     )
     .ok()?;

@@ -8,7 +8,7 @@ mod input;
 mod tests {
     use super::input::whole_pixel_rows;
     use alloc::{borrow::Cow, vec};
-    use zenpixels::{ImageSpec as D, PixelView};
+    use zenpixels::{PixelFormat as D, PixelView};
     #[test]
     fn native_rows_match_visible_samples_and_keep_representable_views_borrowed() {
         for desc in [D::RGB8_SRGB, D::RGBA8_SRGB, D::GRAY8_SRGB, D::GRAYA8_SRGB] {

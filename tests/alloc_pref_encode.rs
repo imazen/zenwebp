@@ -18,7 +18,7 @@
 
 use zencodec::encode::{EncodeJob, Encoder, EncoderConfig as _};
 use zencodec::{AllocPreference, ResourceLimits};
-use zenpixels::{ImageSpec, PixelView};
+use zenpixels::{PixelFormat, PixelView};
 use zenwebp::zencodec::WebpEncoderConfig;
 
 /// Gradient + checker noise, with a checker of alpha=0 / alpha=x / opaque so
@@ -59,7 +59,7 @@ fn encode_with_pref(
     pixels: &[u8],
     w: u32,
     h: u32,
-    desc: ImageSpec,
+    desc: PixelFormat,
     pref: Option<AllocPreference>,
 ) -> Vec<u8> {
     let stride_bytes = (w as usize) * desc.layout.bytes_per_pixel();
@@ -77,10 +77,10 @@ fn encode_with_pref(
         .to_vec()
 }
 
-fn assert_three_modes_identical(cfg: &WebpEncoderConfig, name: &str, desc: ImageSpec) {
+fn assert_three_modes_identical(cfg: &WebpEncoderConfig, name: &str, desc: PixelFormat) {
     let (w, h) = (67u32, 41u32); // odd dims: partial MBs + odd chroma
     let bpp = desc.layout.bytes_per_pixel();
-    let bgra = desc == ImageSpec::BGRA8_SRGB;
+    let bgra = desc == PixelFormat::BGRA8_SRGB;
     let px = make_image(w, h, bpp, bgra);
     let default = encode_with_pref(cfg, &px, w, h, desc.clone(), None);
     let codec_default = encode_with_pref(
@@ -123,10 +123,10 @@ fn assert_three_modes_identical(cfg: &WebpEncoderConfig, name: &str, desc: Image
 fn lossless_three_modes_byte_identical() {
     let cfg = WebpEncoderConfig::lossless();
     for (name, desc) in [
-        ("lossless rgb8", ImageSpec::RGB8_SRGB),
-        ("lossless rgba8", ImageSpec::RGBA8_SRGB),
-        ("lossless bgra8", ImageSpec::BGRA8_SRGB),
-        ("lossless gray8", ImageSpec::GRAY8_SRGB),
+        ("lossless rgb8", PixelFormat::RGB8_SRGB),
+        ("lossless rgba8", PixelFormat::RGBA8_SRGB),
+        ("lossless bgra8", PixelFormat::BGRA8_SRGB),
+        ("lossless gray8", PixelFormat::GRAY8_SRGB),
     ] {
         assert_three_modes_identical(&cfg, name, desc);
     }
@@ -138,9 +138,9 @@ fn lossy_with_alpha_three_modes_byte_identical() {
     // extraction + alpha-in-green VP8L plane (both routed buffers).
     let cfg = WebpEncoderConfig::lossy().with_quality(75.0);
     for (name, desc) in [
-        ("lossy rgba8", ImageSpec::RGBA8_SRGB),
-        ("lossy bgra8", ImageSpec::BGRA8_SRGB),
-        ("lossy rgb8", ImageSpec::RGB8_SRGB),
+        ("lossy rgba8", PixelFormat::RGBA8_SRGB),
+        ("lossy bgra8", PixelFormat::BGRA8_SRGB),
+        ("lossy rgb8", PixelFormat::RGB8_SRGB),
     ] {
         assert_three_modes_identical(&cfg, name, desc);
     }

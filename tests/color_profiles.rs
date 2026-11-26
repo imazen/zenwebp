@@ -5,7 +5,7 @@ mod icc;
 
 use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
 use zencodec::{Metadata, MetadataPolicy};
-use zenpixels::{Cicp, ColorSpace, ImageSpec, PixelView};
+use zenpixels::{Cicp, ColorSpace, PixelFormat, PixelView};
 use zenwebp::zencodec::WebpEncoderConfig;
 
 #[test]
@@ -19,7 +19,7 @@ fn still_p3_carrier_matches_colorants_and_trc_and_preserves_authored_icc() {
         } else {
             Metadata::none().with_cicp(Cicp::DISPLAY_P3)
         };
-        let spec = ImageSpec::new(zenpixels::SampleLayout::RGB8, ColorSpace::DISPLAY_P3);
+        let spec = PixelFormat::new(zenpixels::SampleLayout::RGB8, ColorSpace::DISPLAY_P3);
         let out = WebpEncoderConfig::lossless()
             .job()
             .with_metadata_policy(metadata, MetadataPolicy::PreserveExact)
@@ -40,7 +40,7 @@ fn still_p3_carrier_matches_colorants_and_trc_and_preserves_authored_icc() {
 fn unified_dev_graph_encodes_pq_labeled_samples_with_bundled_database() {
     // zenpng enables icc-db in this graph, even when zenwebp's cms is off.
     let codes = [0, 64, 255, 192, 128, 8];
-    let spec = ImageSpec::new(zenpixels::SampleLayout::RGB8, ColorSpace::BT2100_PQ);
+    let spec = PixelFormat::new(zenpixels::SampleLayout::RGB8, ColorSpace::BT2100_PQ);
     let out = WebpEncoderConfig::lossless()
         .job()
         .encoder()

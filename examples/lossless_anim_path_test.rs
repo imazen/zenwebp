@@ -25,8 +25,14 @@ fn main() {
     let cfg_a = zenwebp::zencodec::WebpEncoderConfig::lossless().with_quality(85.0);
     let job_a = cfg_a.dyn_job();
     let mut frame_enc = job_a.into_animation_frame_encoder().unwrap();
-    let ps_a =
-        PixelView::new(&pixels, w, h, w as usize * 4, &zenpixels::specs::RGBA8_SRGB).unwrap();
+    let ps_a = PixelView::new(
+        &pixels,
+        w,
+        h,
+        w as usize * 4,
+        &zenpixels::formats::RGBA8_SRGB,
+    )
+    .unwrap();
     frame_enc.push_frame(ps_a, 100, None).unwrap();
     let out_a = frame_enc.finish(None).unwrap();
     fs::write("/tmp/zenwebp_via_anim_path.webp", out_a.data()).unwrap();
@@ -35,8 +41,14 @@ fn main() {
     // Path B: single-frame encoder
     let cfg_b = zenwebp::zencodec::WebpEncoderConfig::lossless().with_quality(85.0);
     let encoder = cfg_b.dyn_job().into_encoder().unwrap();
-    let ps_b =
-        PixelView::new(&pixels, w, h, w as usize * 4, &zenpixels::specs::RGBA8_SRGB).unwrap();
+    let ps_b = PixelView::new(
+        &pixels,
+        w,
+        h,
+        w as usize * 4,
+        &zenpixels::formats::RGBA8_SRGB,
+    )
+    .unwrap();
     let out_b = encoder.encode(ps_b).unwrap();
     fs::write("/tmp/zenwebp_via_single_path.webp", out_b.data()).unwrap();
     dump_chunks("single-frame path", out_b.data());

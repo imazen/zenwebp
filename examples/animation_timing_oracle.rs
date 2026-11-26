@@ -8,7 +8,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .animation_frame_encoder()?;
     for index in 0..3 {
         let bytes = [index * 40, 20, 60].repeat(256);
-        let pixels = zenpixels::PixelView::new(&bytes, 16, 16, 48, &zenpixels::specs::RGB8_SRGB)?;
+        let pixels = zenpixels::PixelView::new(&bytes, 16, 16, 48, &zenpixels::formats::RGB8_SRGB)?;
         encoder.push_frame_timed(pixels, FrameDuration::new(1, 30)?, None)?;
     }
     std::fs::write(path, encoder.finish(None)?.into_vec())?;

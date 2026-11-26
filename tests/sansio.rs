@@ -53,7 +53,7 @@ fn assert_parity(data: &[u8]) {
         (Ok(expected), Ok((info, _))) => {
             let pixels = expected.into_buffer();
             assert_eq!((info.width, info.height), (pixels.width(), pixels.height()));
-            assert_eq!(sink.descriptor(), Some(pixels.spec().clone()));
+            assert_eq!(sink.descriptor(), Some(pixels.format().clone()));
             assert_eq!(sink.bytes(), pixels.into_vec::<u8>().unwrap());
             assert!(sink.finished());
         }
@@ -277,11 +277,11 @@ impl zencodec::source::ReadAt for WindowSource<'_> {
 }
 
 fn assert_other_decode_paths(data: &[u8]) {
-    use zenpixels::ImageSpec;
+    use zenpixels::PixelFormat;
     for preferred in [
         &[][..],
-        &[ImageSpec::BGRA8_SRGB][..],
-        &[ImageSpec::RGBA8_SRGB][..],
+        &[PixelFormat::BGRA8_SRGB][..],
+        &[PixelFormat::RGBA8_SRGB][..],
     ] {
         let reference = D::new()
             .job()
@@ -298,7 +298,7 @@ fn assert_other_decode_paths(data: &[u8]) {
         let mut row = 0;
         while let Some((y, strip)) = stream.next_batch().unwrap() {
             assert_eq!(y, row);
-            assert_eq!(strip.spec(), reference.spec());
+            assert_eq!(strip.format(), reference.format());
             for r in 0..strip.rows() {
                 actual.extend_from_slice(strip.row(r));
             }
@@ -315,7 +315,7 @@ fn assert_other_decode_paths(data: &[u8]) {
             .animation_frame_decoder(Cow::Borrowed(data), preferred)
             .unwrap();
         let frame = animation.render_next_frame_owned(None).unwrap().unwrap();
-        assert_eq!(frame.pixels().spec(), reference.spec());
+        assert_eq!(frame.pixels().format(), reference.format());
         for r in 0..reference.height() {
             assert_eq!(frame.pixels().row(r), reference.as_view().row(r));
         }
@@ -338,7 +338,7 @@ fn assert_other_decode_paths(data: &[u8]) {
         )
         .unwrap();
         assert!(stats.reads > 0);
-        assert_eq!(sink.descriptor(), Some(reference.spec().clone()));
+        assert_eq!(sink.descriptor(), Some(reference.format().clone()));
         assert_eq!(sink.bytes(), reference.into_vec::<u8>().unwrap());
     }
 }

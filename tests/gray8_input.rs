@@ -4,7 +4,7 @@
 //!
 //! 1. `EncodeRequest` with `PixelLayout::L8` — direct lossy / lossless encoding
 //!    from a single-channel grayscale buffer.
-//! 2. `WebpEncoderConfig` with `ImageSpec::GRAY8_SRGB` — the zencodec
+//! 2. `WebpEncoderConfig` with `PixelFormat::GRAY8_SRGB` — the zencodec
 //!    adapter, which previously expanded gray→RGB into a 3× transient `Vec`
 //!    before handing off; now passes the buffer through to the L8 path
 //!    zero-copy.
@@ -116,7 +116,7 @@ fn zencodec_gray8_passthrough_lossless_byte_exact() {
 
     let cfg = WebpEncoderConfig::lossless().with_exact(true);
     let slice =
-        PixelView::new(&gray, w, h, w as usize, &zenpixels::specs::GRAY8_SRGB).expect("slice");
+        PixelView::new(&gray, w, h, w as usize, &zenpixels::formats::GRAY8_SRGB).expect("slice");
     let bytes = cfg
         .job()
         .encoder()
@@ -153,7 +153,7 @@ fn zencodec_gray8_padded_stride_lossless_byte_exact() {
     }
 
     let cfg = WebpEncoderConfig::lossless().with_exact(true);
-    let slice = PixelView::new(&padded, w, h, stride_bytes, &zenpixels::specs::GRAY8_SRGB)
+    let slice = PixelView::new(&padded, w, h, stride_bytes, &zenpixels::formats::GRAY8_SRGB)
         .expect("padded slice");
     let bytes = cfg
         .job()
