@@ -6,7 +6,7 @@ use zencodec::decode::{
     DecodeJob, DecodeRowSink, Event, IncrementalDecode, Input, InputRequest, Progress, StepError,
 };
 use zencodec::{CategorizedError, CodecError, ImageInfo, LimitExceeded, ResourceLimits};
-use zenpixels::PixelDescriptor;
+use zenpixels::PixelFormat;
 
 pub(crate) struct LimitedWholeFile<J> {
     inner: zencodec::helpers::WholeFileIncremental<J>,
@@ -23,7 +23,7 @@ where
     pub(crate) fn new(
         job: J,
         probe: J,
-        preferred: &[PixelDescriptor],
+        preferred: &[PixelFormat],
         limits: ResourceLimits,
         codec: &'static str,
     ) -> Self {
@@ -116,8 +116,8 @@ where
         self.inner.info()
     }
 
-    fn output_descriptor(&self) -> Option<PixelDescriptor> {
-        self.inner.output_descriptor()
+    fn output_pixel_format(&self) -> Option<PixelFormat> {
+        self.inner.output_pixel_format()
     }
 
     fn access_pattern(&self) -> zencodec::source::AccessPattern {

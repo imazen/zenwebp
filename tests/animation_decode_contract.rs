@@ -7,10 +7,16 @@ use std::{
 };
 use zencodec::decode::{AnimationFrameDecoder, DecodeJob, DecoderConfig};
 use zencodec::encode::{AnimationFrameEncoder, EncodeJob, EncoderConfig};
-use zenpixels::{PixelBuffer, PixelDescriptor};
+use zenpixels::{PixelBuf, PixelFormat};
 use zenwebp::zencodec::{WebpDecoderConfig, WebpEncoderConfig};
 
-#[allow(deprecated)] // Intentional legacy metadata-setter coverage.
+fn view_icc<'a>(view: &'a zenpixels::PixelView<'_>) -> Option<&'a [u8]> {
+    match &view.format().color {
+        zenpixels::ColorSpace::Icc { profile, .. } => Some(profile),
+        _ => None,
+    }
+}
+
 fn encode(lossy: bool, icc: bool) -> Vec<u8> {
     let data: Vec<_> = (0..128 * 256 * 4)
         .map(|i| {
@@ -21,7 +27,7 @@ fn encode(lossy: bool, icc: bool) -> Vec<u8> {
             }
         })
         .collect();
-    let pixels = PixelBuffer::from_vec(data, 128, 256, PixelDescriptor::RGBA8_SRGB).unwrap();
+    let pixels = PixelBuf::from_bytes(data, 128, 256, PixelFormat::RGBA8_SRGB).unwrap();
     let config = if lossy {
         WebpEncoderConfig::lossy()
     } else {
@@ -29,14 +35,15 @@ fn encode(lossy: bool, icc: bool) -> Vec<u8> {
     };
     let mut job = config.job();
     if icc {
-        job = job.with_metadata_policy(
-            zencodec::Metadata::none().with_icc(zenpixels_convert::icc_profiles::DISPLAY_P3_V4),
-            zencodec::MetadataPolicy::PreserveExact,
+        job = job.with_unfiltered_metadata(
+            zencodec::Metadata::none()
+                .with_icc(zenpixels_convert::icc_profiles::DISPLAY_P3_V4)
+                .filtered(&zencodec::MetadataPolicy::PreserveExact),
         );
     }
     let mut encoder = job.animation_frame_encoder().unwrap();
     for _ in 0..3 {
-        encoder.push_frame(pixels.as_slice(), 10, None).unwrap();
+        encoder.push_frame(pixels.as_view(), 10, None).unwrap();
     }
     encoder.finish(None).unwrap().into_vec()
 }
@@ -53,19 +60,13 @@ fn decoded_animation_frames_retain_icc_context_in_borrowed_and_owned_output() {
             if owned {
                 let frame = decoder.render_next_frame_owned(None).unwrap().unwrap();
                 assert_eq!(
-                    frame
-                        .pixels()
-                        .color_context()
-                        .and_then(|c| c.icc.as_deref()),
+                    view_icc(&frame.pixels()),
                     Some(zenpixels_convert::icc_profiles::DISPLAY_P3_V4)
                 );
             } else {
                 let frame = decoder.render_next_frame(None).unwrap().unwrap();
                 assert_eq!(
-                    frame
-                        .pixels()
-                        .color_context()
-                        .and_then(|c| c.icc.as_deref()),
+                    view_icc(frame.pixels()),
                     Some(zenpixels_convert::icc_profiles::DISPLAY_P3_V4)
                 );
             }
@@ -86,8 +87,10 @@ fn decoded_color_context_can_be_reencoded_without_relabeling_samples() {
         .unwrap();
     while let Some(frame) = decoder.render_next_frame(None).unwrap() {
         assert_eq!(
-            frame.pixels().descriptor().primaries,
-            zenpixels::ColorPrimaries::DisplayP3
+            zenpixels::icc::IccIdentification::from_icc(view_icc(frame.pixels()).unwrap())
+                .unwrap()
+                .primaries,
+            zenpixels::Primaries::DisplayP3
         );
         encoder
             .push_frame_timed(frame.pixels().clone(), frame.duration(), None)
@@ -156,14 +159,13 @@ fn animation_decode_cancellation_reaches_lossy_and_lossless_kernels() {
 }
 
 #[test]
-#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn still_decoder_views_keep_icc_context_and_bgra_pixels() {
     use zencodec::decode::{Decode, StreamingDecode};
     use zencodec::encode::Encoder;
     let data: Vec<_> = (0..17 * 19 * 4)
         .map(|i| ((i * 73 + i / 11) % 255) as u8)
         .collect();
-    let pixels = PixelBuffer::from_vec(data, 17, 19, PixelDescriptor::RGBA8_SRGB).unwrap();
+    let pixels = PixelBuf::from_bytes(data, 17, 19, PixelFormat::RGBA8_SRGB).unwrap();
     let icc = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
     for lossy in [false, true] {
         let config = if lossy {
@@ -173,13 +175,14 @@ fn still_decoder_views_keep_icc_context_and_bgra_pixels() {
         };
         let output = config
             .job()
-            .with_metadata_policy(
-                zencodec::Metadata::none().with_icc(icc),
-                zencodec::MetadataPolicy::PreserveExact,
+            .with_unfiltered_metadata(
+                zencodec::Metadata::none()
+                    .with_icc(icc)
+                    .filtered(&zencodec::MetadataPolicy::PreserveExact),
             )
             .encoder()
             .unwrap()
-            .encode(pixels.as_slice())
+            .encode(pixels.as_view())
             .unwrap();
         let rgba = WebpDecoderConfig::new()
             .job()
@@ -188,21 +191,25 @@ fn still_decoder_views_keep_icc_context_and_bgra_pixels() {
             .decode()
             .unwrap()
             .pixels()
-            .contiguous_bytes()
+            .to_contiguous_bytes()
+            .unwrap()
             .into_owned();
         for allow_icc in [None, Some(true), Some(false)] {
             let deny_icc = allow_icc == Some(false);
             let job = || {
                 let job = WebpDecoderConfig::new().job();
                 if let Some(allow) = allow_icc {
-                    job.with_policy(zencodec::decode::DecodePolicy::default().with_allow_icc(allow))
+                    job.try_with_policy(
+                        zencodec::decode::DecodePolicy::default().with_allow_icc(allow),
+                    )
+                    .unwrap()
                 } else {
                     job
                 }
             };
             for bgra in [false, true] {
-                let preferred: &[PixelDescriptor] = if bgra {
-                    &[PixelDescriptor::BGRA8_SRGB]
+                let preferred: &[PixelFormat] = if bgra {
+                    &[PixelFormat::BGRA8_SRGB]
                 } else {
                     &[]
                 };
@@ -217,29 +224,39 @@ fn still_decoder_views_keep_icc_context_and_bgra_pixels() {
                         pixel.swap(0, 2);
                     }
                 }
-                assert_eq!(decoded.pixels().contiguous_bytes().as_ref(), expected);
-                let descriptor = decoded.pixels().descriptor();
-                assert_eq!(descriptor.primaries, zenpixels::ColorPrimaries::DisplayP3);
                 assert_eq!(
-                    descriptor.layout(),
+                    decoded.pixels().to_contiguous_bytes().unwrap().as_ref(),
+                    expected
+                );
+                let view = decoded.pixels();
+                let descriptor = view.format();
+                let primaries = match &descriptor.color {
+                    zenpixels::ColorSpace::Icc { profile, .. } => {
+                        zenpixels::icc::IccIdentification::from_icc(profile)
+                            .unwrap()
+                            .primaries
+                    }
+                    zenpixels::ColorSpace::Rgb { primaries, .. } => *primaries,
+                    color => panic!("unexpected WebP color spec {color:?}"),
+                };
+                assert_eq!(primaries, zenpixels::Primaries::DisplayP3);
+                assert_eq!(
+                    descriptor.layout.order,
                     if bgra {
-                        zenpixels::ChannelLayout::Bgra
+                        zenpixels::ChannelOrder::Bgra
                     } else {
-                        zenpixels::ChannelLayout::Rgba
+                        zenpixels::ChannelOrder::Rgba
                     }
                 );
                 if !bgra {
                     assert_eq!(
-                        job().output_info(output.data()).unwrap().native_format,
+                        &job().output_info(output.data()).unwrap().native_format,
                         descriptor
                     );
                 }
-                let check = |view: &zenpixels::PixelSlice<'_>| {
-                    assert_eq!(view.descriptor(), descriptor);
-                    assert_eq!(
-                        view.color_context().and_then(|c| c.icc.as_deref()),
-                        (!deny_icc).then_some(icc)
-                    );
+                let check = |view: &zenpixels::PixelView<'_>| {
+                    assert_eq!(view.format(), descriptor);
+                    assert_eq!(view_icc(view), (!deny_icc).then_some(icc));
                 };
                 check(&decoded.pixels());
                 let mut streaming = job()
@@ -248,7 +265,7 @@ fn still_decoder_views_keep_icc_context_and_bgra_pixels() {
                 let mut streamed = Vec::new();
                 while let Some((_, batch)) = streaming.next_batch().unwrap() {
                     check(&batch);
-                    streamed.extend_from_slice(&batch.contiguous_bytes());
+                    streamed.extend_from_slice(&batch.to_contiguous_bytes().unwrap());
                 }
                 assert_eq!(streamed, expected);
                 let mut animation = job()
@@ -256,7 +273,10 @@ fn still_decoder_views_keep_icc_context_and_bgra_pixels() {
                     .unwrap();
                 let frame = animation.render_next_frame(None).unwrap().unwrap();
                 check(frame.pixels());
-                assert_eq!(frame.pixels().contiguous_bytes().as_ref(), expected);
+                assert_eq!(
+                    frame.pixels().to_contiguous_bytes().unwrap().as_ref(),
+                    expected
+                );
                 assert!(animation.render_next_frame(None).unwrap().is_none());
             }
         }

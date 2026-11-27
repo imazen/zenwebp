@@ -236,7 +236,7 @@ struct CollectSink {
     buf: Vec<u8>,
     w: u32,
     h: u32,
-    desc: Option<zenpixels::PixelDescriptor>,
+    desc: Option<zenpixels::PixelFormat>,
 }
 
 impl zencodec::decode::DecodeRowSink for CollectSink {
@@ -244,29 +244,27 @@ impl zencodec::decode::DecodeRowSink for CollectSink {
         &mut self,
         width: u32,
         height: u32,
-        descriptor: zenpixels::PixelDescriptor,
+        descriptor: zenpixels::PixelFormat,
     ) -> Result<(), zencodec::decode::SinkError> {
         self.w = width;
         self.h = height;
-        self.desc = Some(descriptor);
-        self.buf = vec![0; width as usize * height as usize * descriptor.bytes_per_pixel()];
+        self.desc = Some(descriptor.clone());
+        self.buf = vec![0; width as usize * height as usize * descriptor.layout.bytes_per_pixel()];
         Ok(())
     }
     fn provide_next_buffer(
         &mut self,
-        y: u32,
-        height: u32,
-        width: u32,
-        descriptor: zenpixels::PixelDescriptor,
-    ) -> Result<zenpixels::PixelSliceMut<'_>, zencodec::decode::SinkError> {
-        let row = width as usize * descriptor.bytes_per_pixel();
-        let start = y as usize * row;
-        zenpixels::PixelSliceMut::new(
-            &mut self.buf[start..start + height as usize * row],
-            width,
-            height,
+        strip: zencodec::decode::RowStrip,
+        descriptor: zenpixels::PixelFormat,
+    ) -> Result<zenpixels::PixelViewMut<'_>, zencodec::decode::SinkError> {
+        let row = strip.width as usize * descriptor.layout.bytes_per_pixel();
+        let start = strip.y as usize * row;
+        zenpixels::PixelViewMut::new_with_format_cow(
+            &mut self.buf[start..start + strip.height as usize * row],
+            strip.width,
+            strip.height,
             row,
-            descriptor,
+            zenpixels::FormatCow::from_owned(descriptor),
         )
         .map_err(|x| zencodec::decode::SinkError::from(format!("{x}")))
     }
@@ -275,8 +273,8 @@ impl zencodec::decode::DecodeRowSink for CollectSink {
     }
 }
 
-fn desc_layout(d: zenpixels::PixelDescriptor) -> Result<&'static str, String> {
-    use zenpixels::PixelDescriptor as P;
+fn desc_layout(d: zenpixels::PixelFormat) -> Result<&'static str, String> {
+    use zenpixels::PixelFormat as P;
     Ok(if d == P::RGBA8_SRGB {
         "rgba"
     } else if d == P::RGB8_SRGB {
@@ -291,7 +289,7 @@ fn desc_layout(d: zenpixels::PixelDescriptor) -> Result<&'static str, String> {
 fn zc_push(
     data: &[u8],
     cfg: zenwebp::zencodec::WebpDecoderConfig,
-    preferred: &[zenpixels::PixelDescriptor],
+    preferred: &[zenpixels::PixelFormat],
 ) -> Out {
     use zencodec::decode::{DecodeJob, DecoderConfig as _};
     let mut sink = CollectSink {
@@ -350,7 +348,7 @@ pub fn pack_planes(
 
 /// Decode `data` through zenwebp in `mode`.
 pub fn zen_decode(mode: &str, data: &[u8]) -> Out {
-    use zenpixels::PixelDescriptor as P;
+    use zenpixels::PixelFormat as P;
     use zenwebp::oneshot as o;
     use zenwebp::zencodec::WebpDecoderConfig as Zc;
     let simple = || DecodeConfig::default().upsampling(UpsamplingMethod::Simple);
@@ -383,9 +381,9 @@ pub fn zen_decode(mode: &str, data: &[u8]) -> Out {
         "zc_decode" => {
             let out = Zc::new().decode(data).map_err(e)?;
             let px = out.pixels();
-            let (w, h) = (px.width(), px.rows());
-            let layout = desc_layout(px.descriptor())?;
-            let bpp = px.descriptor().bytes_per_pixel();
+            let (w, h) = (px.width(), px.height());
+            let layout = desc_layout(px.format().clone())?;
+            let bpp = px.format().layout.bytes_per_pixel();
             let mut tight = Vec::with_capacity(w as usize * h as usize * bpp);
             for y in 0..h {
                 tight.extend_from_slice(&px.row(y)[..w as usize * bpp]);

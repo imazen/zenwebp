@@ -1,0 +1,26 @@
+[package]
+name = "zenwebp-color-contract"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Keep the codec's dev-dependencies (including zenpng's icc-db) out of this graph.
+[workspace]
+
+[features]
+cms = ["zenwebp/cms"]
+
+[dev-dependencies]
+zenwebp = { path = "../..", default-features = false }
+zenpixels = { version = ">=0.5.0, <0.6.0", default-features = false }
+zencodec = ">=0.3.0, <0.5.0"
+zencodec-io = { version = "0.2.0", features = ["std"] }
+webpx = { version = "0.4.0", features = ["animation", "icc"] }
+
+[patch.crates-io]
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "7fa068834f8074c2630a352b25f355f7c90751f8" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "7fa068834f8074c2630a352b25f355f7c90751f8" }
+garb = { git = "https://github.com/imazen/garb", rev = "457ff8b9153e9d675a39dc098052b2ffeb6206fa" }
+linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "ae83f19426737635fee3dd16f228681019f52585" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "5d4f6c473404c09c95f404543f8a16a1e3cb8477" }
+zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "5d4f6c473404c09c95f404543f8a16a1e3cb8477" }

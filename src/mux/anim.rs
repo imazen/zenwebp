@@ -552,28 +552,28 @@ fn to_rgba(pixels: &[u8], color_type: PixelLayout, width: u32, height: u32) -> O
     let mut rgba = alloc::vec![0u8; npixels * 4];
     match color_type {
         PixelLayout::L8 => {
-            garb::bytes::gray_to_rgba(&pixels[..npixels], &mut rgba).ok()?;
+            crate::packed_pixels::gray_to_rgba(&pixels[..npixels], &mut rgba).ok()?;
             Some(rgba)
         }
         PixelLayout::La8 => {
-            garb::bytes::gray_alpha_to_rgba(&pixels[..npixels * 2], &mut rgba).ok()?;
+            crate::packed_pixels::gray_alpha_to_rgba(&pixels[..npixels * 2], &mut rgba).ok()?;
             Some(rgba)
         }
         PixelLayout::Rgb8 => {
-            garb::bytes::rgb_to_rgba(&pixels[..npixels * 3], &mut rgba).ok()?;
+            crate::packed_pixels::rgb_to_rgba(&pixels[..npixels * 3], &mut rgba).ok()?;
             Some(rgba)
         }
         PixelLayout::Rgba8 => Some(pixels[..npixels * 4].to_vec()),
         PixelLayout::Bgr8 => {
-            garb::bytes::bgr_to_rgba(&pixels[..npixels * 3], &mut rgba).ok()?;
+            crate::packed_pixels::bgr_to_rgba(&pixels[..npixels * 3], &mut rgba).ok()?;
             Some(rgba)
         }
         PixelLayout::Bgra8 => {
-            garb::bytes::bgra_to_rgba(&pixels[..npixels * 4], &mut rgba).ok()?;
+            crate::packed_pixels::bgra_to_rgba(&pixels[..npixels * 4], &mut rgba).ok()?;
             Some(rgba)
         }
         PixelLayout::Argb8 => {
-            garb::bytes::argb_to_rgba(&pixels[..npixels * 4], &mut rgba).ok()?;
+            crate::packed_pixels::argb_to_rgba(&pixels[..npixels * 4], &mut rgba).ok()?;
             Some(rgba)
         }
         PixelLayout::Yuv420 => None,

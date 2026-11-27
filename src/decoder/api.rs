@@ -579,7 +579,7 @@ impl<'a> DecodeRequest<'a> {
                 pixel_count * 3,
             )
             .map_err(|_| at!(DecodeError::MemoryLimitExceeded))?;
-            garb::bytes::rgba_to_rgb(&native, &mut rgb).map_err(|e| at!(garb_err(e)))?;
+            crate::packed_pixels::rgba_to_rgb(&native, &mut rgb).map_err(|e| at!(garb_err(e)))?;
             Ok((rgb, w, h))
         }
     }
@@ -634,7 +634,7 @@ impl<'a> DecodeRequest<'a> {
             3,
             self.stride_pixels,
             |src, dst, w, h, ss, ds| {
-                garb::bytes::rgba_to_rgb_strided(src, dst, w, h, ss, ds).map_err(garb_err)
+                crate::packed_pixels::rgba_to_rgb_strided(src, dst, w, h, ss, ds).map_err(garb_err)
             },
         )?;
         Ok((w, h))
@@ -794,7 +794,7 @@ impl<'a> DecodeRequest<'a> {
                         pixel_count * 3,
                     )
                     .map_err(|_| whereat::at!(DecodeError::MemoryLimitExceeded))?;
-                    garb::bytes::rgba_to_rgb(&output, &mut rgb)
+                    crate::packed_pixels::rgba_to_rgb(&output, &mut rgb)
                         .map_err(|e| whereat::at!(garb_err(e)))?;
                     Ok((rgb, w, h))
                 } else {
@@ -1475,7 +1475,7 @@ impl<'a> WebPDecoder<'a> {
                     super::alloc_util::alloc_zeroed(self.limits.alloc_pref, true, alloc_size)
                         .map_err(|_| at!(DecodeError::MemoryLimitExceeded))?;
                 decoder.decode_frame(self.width, self.height, false, &mut data)?;
-                garb::bytes::rgba_to_rgb(&data, buf).map_err(garb_err)?;
+                crate::packed_pixels::rgba_to_rgb(&data, buf).map_err(garb_err)?;
             }
         } else {
             let range = self
@@ -1870,7 +1870,7 @@ impl<'a> WebPDecoder<'a> {
         if self.has_alpha() {
             buf.copy_from_slice(self.animation.canvas.as_ref().unwrap());
         } else {
-            garb::bytes::rgba_to_rgb(self.animation.canvas.as_ref().unwrap(), buf)
+            crate::packed_pixels::rgba_to_rgb(self.animation.canvas.as_ref().unwrap(), buf)
                 .map_err(garb_err)?;
         }
 
@@ -1912,7 +1912,7 @@ impl<'a> WebPDecoder<'a> {
 }
 
 /// Convert a garb SizeError into a DecodeError.
-fn garb_err(e: garb::SizeError) -> DecodeError {
+fn garb_err(e: crate::packed_pixels::SizeError) -> DecodeError {
     DecodeError::InvalidParameter(alloc::format!("pixel conversion: {e}"))
 }
 
@@ -1991,7 +1991,7 @@ fn decode_to_rgba_internal(
         let pixel_count = (w as usize) * (h as usize);
         let mut rgba = super::alloc_util::alloc_zeroed(limits.alloc_pref, true, pixel_count * 4)
             .map_err(|_| at!(DecodeError::MemoryLimitExceeded))?;
-        garb::bytes::rgb_to_rgba(&native, &mut rgba).map_err(|e| at!(garb_err(e)))?;
+        crate::packed_pixels::rgb_to_rgba(&native, &mut rgba).map_err(|e| at!(garb_err(e)))?;
         Ok((rgba, w, h))
     }
 }
@@ -2268,7 +2268,7 @@ pub struct YuvPlanes {
 #[track_caller]
 pub fn decode_bgra(data: &[u8]) -> DecodeResult<(Vec<u8>, u32, u32)> {
     let (mut rgba, w, h) = decode_rgba(data)?;
-    garb::bytes::rgba_to_bgra_inplace(&mut rgba).map_err(|e| at!(garb_err(e)))?;
+    crate::packed_pixels::rgba_to_bgra_inplace(&mut rgba).map_err(|e| at!(garb_err(e)))?;
     Ok((rgba, w, h))
 }
 
@@ -2286,7 +2286,7 @@ pub fn decode_bgr(data: &[u8]) -> DecodeResult<(Vec<u8>, u32, u32)> {
         (w * h * 3) as usize,
     )
     .map_err(|_| at!(DecodeError::MemoryLimitExceeded))?;
-    garb::bytes::rgba_to_bgr(&rgba, &mut bgr).map_err(|e| at!(garb_err(e)))?;
+    crate::packed_pixels::rgba_to_bgr(&rgba, &mut bgr).map_err(|e| at!(garb_err(e)))?;
     Ok((bgr, w, h))
 }
 
@@ -2316,7 +2316,7 @@ pub fn decode_bgra_into(
         4,
         Some(stride_pixels),
         |src, dst, w, h, ss, ds| {
-            garb::bytes::rgba_to_bgra_strided(src, dst, w, h, ss, ds).map_err(garb_err)
+            crate::packed_pixels::rgba_to_bgra_strided(src, dst, w, h, ss, ds).map_err(garb_err)
         },
     )?;
     Ok((w, h))
@@ -2328,7 +2328,7 @@ pub fn decode_bgra_into(
 #[track_caller]
 pub fn decode_argb(data: &[u8]) -> DecodeResult<(Vec<u8>, u32, u32)> {
     let (mut rgba, w, h) = decode_rgba(data)?;
-    garb::bytes::rgba_to_argb_inplace(&mut rgba).map_err(|e| at!(garb_err(e)))?;
+    crate::packed_pixels::rgba_to_argb_inplace(&mut rgba).map_err(|e| at!(garb_err(e)))?;
     Ok((rgba, w, h))
 }
 
@@ -2358,7 +2358,7 @@ pub fn decode_argb_into(
         4,
         Some(stride_pixels),
         |src, dst, w, h, ss, ds| {
-            garb::bytes::rgba_to_argb_strided(src, dst, w, h, ss, ds).map_err(garb_err)
+            crate::packed_pixels::rgba_to_argb_strided(src, dst, w, h, ss, ds).map_err(garb_err)
         },
     )?;
     Ok((w, h))
@@ -2388,7 +2388,7 @@ pub fn decode_bgr_into(
         3,
         Some(stride_pixels),
         |src, dst, w, h, ss, ds| {
-            garb::bytes::rgba_to_bgr_strided(src, dst, w, h, ss, ds).map_err(garb_err)
+            crate::packed_pixels::rgba_to_bgr_strided(src, dst, w, h, ss, ds).map_err(garb_err)
         },
     )?;
     Ok((w, h))

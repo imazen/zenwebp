@@ -278,7 +278,7 @@ fn zencodec_jobs_report_through_with_pulse() {
         .unwrap()
         .decode()
         .unwrap();
-    assert_eq!(out.pixels().rows(), 48);
+    assert_eq!(out.pixels().height(), 48);
     assert_eq!(observed(&t), (Total::Exact(48), 48));
 
     // Animation decode: frames.
@@ -293,11 +293,11 @@ fn zencodec_jobs_report_through_with_pulse() {
     assert_eq!(observed(&t), (Total::Exact(3), 3));
 
     // Still encode: percent.
-    let px = zenpixels::PixelBuffer::from_vec(
+    let px = zenpixels::PixelBuf::from_bytes(
         pattern(40, 30, 5),
         40,
         30,
-        zenpixels::PixelDescriptor::RGBA8_SRGB,
+        zenpixels::PixelFormat::RGBA8_SRGB,
     )
     .unwrap();
     let t = tree();
@@ -306,7 +306,7 @@ fn zencodec_jobs_report_through_with_pulse() {
         .with_pulse(t.share().unwrap())
         .encoder()
         .unwrap()
-        .encode(px.as_slice())
+        .encode(px.as_view())
         .unwrap();
     assert_eq!(observed(&t), (Total::Exact(100), 100));
 
@@ -319,7 +319,7 @@ fn zencodec_jobs_report_through_with_pulse() {
         .unwrap();
     for _ in 0..3 {
         enc.push_frame_timed(
-            px.as_slice(),
+            px.as_view(),
             zencodec::animation::FrameDuration::from_millis(20),
             None,
         )

@@ -14,8 +14,7 @@ fn ordinary_timing_and_exact_admission_match_encoded_frames() {
     for index in 0..30 {
         let bytes = [index * 7, 40, 60].repeat(256);
         let pixels = || {
-            zenpixels::PixelSlice::new(&bytes, 16, 16, 48, zenpixels::PixelDescriptor::RGB8_SRGB)
-                .unwrap()
+            zenpixels::PixelView::new(&bytes, 16, 16, 48, &zenpixels::formats::RGB8_SRGB).unwrap()
         };
         if index == 0 {
             assert!(
@@ -68,9 +67,8 @@ fn cumulative_timestamp_overflow_rejects_before_acceptance() {
         .animation_frame_encoder()
         .unwrap();
     let bytes = [20, 40, 60];
-    let pixels = || {
-        zenpixels::PixelSlice::new(&bytes, 1, 1, 3, zenpixels::PixelDescriptor::RGB8_SRGB).unwrap()
-    };
+    let pixels =
+        || zenpixels::PixelView::new(&bytes, 1, 1, 3, &zenpixels::formats::RGB8_SRGB).unwrap();
     let maximum = FrameDuration::from_millis(0x00ff_ffff);
     for _ in 0..256 {
         encoder.push_frame_exact(pixels(), maximum, None).unwrap();
@@ -106,24 +104,21 @@ fn cumulative_timestamp_overflow_rejects_before_acceptance() {
     assert!(decoder.render_next_frame_owned(None).unwrap().is_none());
 }
 
+#[path = "support/icc.rs"]
+mod icc;
+
 // Native timing, metadata and admission cases from PR105.
 mod native_contract {
     use std::borrow::Cow;
     use zencodec::animation::FrameDuration;
     use zencodec::decode::{AnimationFrameDecoder, DecodeJob, DecoderConfig};
     use zencodec::encode::{AnimationFrameEncoder, EncodeJob, EncoderConfig};
-    use zenpixels::{PixelBuffer, PixelDescriptor};
+    use zenpixels::{PixelBuf, PixelFormat};
     use zenwebp::mux::{AnimationConfig, AnimationDecoder, AnimationEncoder, WebPDemuxer};
     use zenwebp::zencodec::{WebpDecoderConfig, WebpEncoderConfig};
 
-    fn pixels() -> PixelBuffer {
-        PixelBuffer::from_vec(
-            [12, 34, 56, 255].repeat(4),
-            2,
-            2,
-            PixelDescriptor::RGBA8_SRGB,
-        )
-        .unwrap()
+    fn pixels() -> PixelBuf {
+        PixelBuf::from_bytes([12, 34, 56, 255].repeat(4), 2, 2, PixelFormat::RGBA8_SRGB).unwrap()
     }
 
     /// One pushed frame is written as a still image whatever its duration
@@ -140,7 +135,7 @@ mod native_contract {
                     .unwrap();
                 encoder
                     .push_frame_timed(
-                        pixels.as_slice(),
+                        pixels.as_view(),
                         FrameDuration::from_millis(milliseconds),
                         None,
                     )
@@ -154,7 +149,7 @@ mod native_contract {
                     .animation_frame_decoder(Cow::Borrowed(encoded.data()), &[])
                     .unwrap();
                 let frame = decoder.render_next_frame(None).unwrap().unwrap();
-                assert_eq!(frame.pixels().row(0), pixels.as_slice().row(0));
+                assert_eq!(frame.pixels().row(0), pixels.as_view().row(0));
                 assert!(decoder.render_next_frame(None).unwrap().is_none());
             }
         }
@@ -184,7 +179,7 @@ mod native_contract {
         for ms in [7, 9] {
             encoder
                 .push_frame_exact(
-                    zenpixels::PixelSlice::new(&padded, 2, 2, 12, PixelDescriptor::RGBA8_SRGB)
+                    zenpixels::PixelView::new(&padded, 2, 2, 12, &zenpixels::formats::RGBA8_SRGB)
                         .unwrap(),
                     FrameDuration::from_millis(ms),
                     None,
@@ -215,14 +210,14 @@ mod native_contract {
         ] {
             assert!(
                 encoder
-                    .push_frame_exact(pixels.as_slice(), duration, None)
+                    .push_frame_exact(pixels.as_view(), duration, None)
                     .is_err()
             );
         }
         for milliseconds in [0, 1, 10] {
             encoder
                 .push_frame_timed(
-                    pixels.as_slice(),
+                    pixels.as_view(),
                     FrameDuration::from_millis(milliseconds),
                     None,
                 )
@@ -242,7 +237,7 @@ mod native_contract {
     #[test]
     fn native_timeline_refuses_overflow_and_preserves_public_u32_types() {
         use zenwebp::mux::{BlendMethod, DisposeMethod, MuxFrame, WebPMux};
-        let pixels = pixels().copy_to_contiguous_bytes();
+        let pixels = pixels().into_vec::<u8>().unwrap();
         let config = zenwebp::EncoderConfig::new_lossless();
         // Explicit u32 variables witness source compatibility of the encoder API.
         let mut encoder = AnimationEncoder::new(2, 2, AnimationConfig::default()).unwrap();
@@ -318,7 +313,7 @@ mod native_contract {
     fn native_timestamp_errors_retain_pending_frame() {
         let mut encoder = AnimationEncoder::new(2, 2, AnimationConfig::default()).unwrap();
         let config = zenwebp::EncoderConfig::new_lossless();
-        let pixels = pixels().copy_to_contiguous_bytes();
+        let pixels = pixels().into_vec::<u8>().unwrap();
         encoder
             .add_frame(&pixels, zenwebp::PixelLayout::Rgba8, 100, &config)
             .unwrap();
@@ -347,10 +342,10 @@ mod native_contract {
     }
 
     #[test]
-    #[allow(deprecated)] // Intentional legacy metadata-setter coverage.
     fn animation_retains_metadata_and_synthesizes_cicp_color_like_still_images() {
-        let pixels = pixels();
         let icc = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
+        let first = [12, 34, 56, 255].repeat(4);
+        let second = [210, 79, 18, 255].repeat(4);
         for explicit_icc in [false, true] {
             let mut metadata = zencodec::Metadata::none()
                 .with_exif(&b"Exif\0\0animation-exif"[..])
@@ -362,31 +357,39 @@ mod native_contract {
             }
             let mut encoder = WebpEncoderConfig::lossless()
                 .job()
-                .with_metadata_policy(metadata, zencodec::MetadataPolicy::PreserveExact)
+                .with_unfiltered_metadata(
+                    metadata.filtered(&zencodec::MetadataPolicy::PreserveExact),
+                )
                 .animation_frame_encoder()
                 .unwrap();
-            encoder
-                .push_frame_timed(pixels.as_slice(), FrameDuration::from_millis(10), None)
-                .unwrap();
+            let spec = PixelFormat::new(
+                zenpixels::SampleLayout::RGBA8,
+                zenpixels::ColorSpace::DISPLAY_P3_ALPHA,
+            );
+            for bytes in [&first, &second] {
+                let view = zenpixels::PixelView::from_bytes(bytes, 2, 2, &spec).unwrap();
+                encoder
+                    .push_frame_timed(view, FrameDuration::from_millis(10), None)
+                    .unwrap();
+            }
             let output = encoder.finish(None).unwrap();
             let demux = WebPDemuxer::new(output.data()).unwrap();
-            let expected_icc = if explicit_icc {
-                std::borrow::Cow::Borrowed(icc)
-            } else {
-                use zenpixels_convert::icc_profiles::{SynthesizedIcc, synthesize_icc_for_cicp};
-                let SynthesizedIcc::Profile(profile) =
-                    synthesize_icc_for_cicp(zenpixels::Cicp::DISPLAY_P3)
-                else {
-                    panic!("Display P3 must have a synthesized ICC carrier");
-                };
-                assert_eq!(
-                    zenpixels::icc::extract_cicp(&profile),
-                    Some(zenpixels::Cicp::DISPLAY_P3),
-                    "the synthesized carrier must name the requested primaries and transfer"
-                );
-                profile
-            };
-            assert_eq!(demux.icc_profile(), Some(expected_icc.as_ref()));
+            assert!(demux.is_animated());
+            let embedded = demux.icc_profile().expect("ICC carrier");
+            super::icc::assert_p3(embedded, explicit_icc);
+            if explicit_icc {
+                assert_eq!(embedded, icc);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let frames = webpx::AnimationDecoder::new(output.data())
+                    .unwrap()
+                    .decode_all()
+                    .unwrap();
+                assert_eq!(frames.len(), 2);
+                assert_eq!(frames[0].data, first);
+                assert_eq!(frames[1].data, second);
+            }
             assert_eq!(demux.exif(), Some(&b"Exif\0\0animation-exif"[..]));
             assert_eq!(demux.xmp(), Some(&b"<x:xmpmeta>animation</x:xmpmeta>"[..]));
         }
@@ -400,18 +403,17 @@ mod native_contract {
             .with_limits(zencodec::ResourceLimits::none().with_max_frames(1))
             .animation_frame_encoder()
             .unwrap();
-        encoder.push_frame(pixels.as_slice(), 10, None).unwrap();
-        assert!(encoder.push_frame(pixels.as_slice(), 20, None).is_err());
+        encoder.push_frame(pixels.as_view(), 10, None).unwrap();
+        assert!(encoder.push_frame(pixels.as_view(), 20, None).is_err());
         let output = encoder.finish(None).unwrap();
         assert_eq!(WebPDemuxer::new(output.data()).unwrap().frames().count(), 1);
         let mut encoder = WebpEncoderConfig::lossless()
             .job()
             .animation_frame_encoder()
             .unwrap();
-        encoder.push_frame(pixels.as_slice(), 10, None).unwrap();
-        let mismatch =
-            PixelBuffer::from_vec(vec![0; 4], 1, 1, PixelDescriptor::RGBA8_SRGB).unwrap();
-        assert!(encoder.push_frame(mismatch.as_slice(), 20, None).is_err());
+        encoder.push_frame(pixels.as_view(), 10, None).unwrap();
+        let mismatch = PixelBuf::from_bytes(vec![0; 4], 1, 1, PixelFormat::RGBA8_SRGB).unwrap();
+        assert!(encoder.push_frame(mismatch.as_view(), 20, None).is_err());
         let output = encoder.finish(None).unwrap();
         assert_eq!(WebPDemuxer::new(output.data()).unwrap().frames().count(), 1);
     }
@@ -435,7 +437,7 @@ mod native_contract {
         let data: Vec<_> = (0..64 * 64 * 4)
             .map(|i| ((i * 37 + i / 5 * 113) % 256) as u8)
             .collect();
-        let pixels = PixelBuffer::from_vec(data, 64, 64, PixelDescriptor::RGBA8_SRGB).unwrap();
+        let pixels = PixelBuf::from_bytes(data, 64, 64, PixelFormat::RGBA8_SRGB).unwrap();
         for job_stop in [false, true] {
             let calls = Arc::new(AtomicUsize::new(0));
             let mut job = WebpEncoderConfig::lossless().job();
@@ -453,7 +455,7 @@ mod native_contract {
                 Some(&per_call_pulse as &dyn zencodec::Pulse)
             };
             assert!(
-                encoder.push_frame(pixels.as_slice(), 10, stop).is_err(),
+                encoder.push_frame(pixels.as_view(), 10, stop).is_err(),
                 "job_stop={job_stop}: encoder ignored cancellation"
             );
             assert!(
@@ -478,7 +480,7 @@ mod native_contract {
             zenwebp::PixelLayout::Yuv420,
         ] {
             let mut encoder = AnimationEncoder::new(2, 2, AnimationConfig::default()).unwrap();
-            let pixels = pixels().copy_to_contiguous_bytes();
+            let pixels = pixels().into_vec::<u8>().unwrap();
             encoder
                 .add_frame(&pixels, zenwebp::PixelLayout::Rgba8, 0, &config)
                 .unwrap();

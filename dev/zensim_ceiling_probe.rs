@@ -35,7 +35,8 @@ const METHODS: &[u8] = &[4, 6];
 
 fn load_png_rgb8(path: &PathBuf) -> Option<(Vec<u8>, u32, u32)> {
     use enough::Unstoppable;
-    use zenpixels_convert::PixelBufferConvertTypedExt;
+    use zenpixels::PixelFormat;
+    use zenpixels_convert::{ConvertPolicy, convert_to_buf};
     use zenpng::PngDecodeConfig;
 
     let bytes = std::fs::read(path).ok()?;
@@ -43,8 +44,13 @@ fn load_png_rgb8(path: &PathBuf) -> Option<(Vec<u8>, u32, u32)> {
     let w = output.info.width;
     let h = output.info.height;
 
-    let rgb_buf = output.pixels.to_rgb8();
-    let slice = rgb_buf.as_slice();
+    let rgb_buf = convert_to_buf(
+        &output.pixels.as_view(),
+        PixelFormat::RGB8_SRGB,
+        &ConvertPolicy::working_linear(),
+    )
+    .ok()?;
+    let slice = rgb_buf.as_view();
     if let Some(contiguous) = slice.as_contiguous_bytes() {
         return Some((contiguous.to_vec(), w, h));
     }

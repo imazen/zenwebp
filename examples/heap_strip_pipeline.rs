@@ -52,7 +52,7 @@ fn main() {
     let mut checksum: u64 = 0;
 
     while let Some((y_start, strip)) = decoder.next_batch().expect("decode error") {
-        let rows = strip.rows();
+        let rows = strip.height();
         batch_count += 1;
 
         // "Process" the strip: accumulate a checksum, then discard.

@@ -65,8 +65,8 @@ checksum = "ab90f361db038ba3135da12c938c328fb43a012992101879e3d6ebccb4d7eba8"
 
 [[package]]
 name = "zenpixels"
-version = "0.3.1"
-source = "git+https://github.com/imazen/zenpixels?rev=bfb13e72db869f9609ba8d7f5bb3bdf41b124bdd#bfb13e72db869f9609ba8d7f5bb3bdf41b124bdd"
+version = "0.5.0"
+source = "git+https://github.com/imazen/zenpixels?rev=7fa068834f8074c2630a352b25f355f7c90751f8#7fa068834f8074c2630a352b25f355f7c90751f8"
 dependencies = [
  "bytemuck",
  "whereat",
@@ -76,5 +76,6 @@ dependencies = [
 name = "zenwebp-byte-stride-check"
 version = "0.0.0"
 dependencies = [
+ "whereat",
  "zenpixels",
 ]

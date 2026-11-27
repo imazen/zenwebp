@@ -53,12 +53,15 @@ fn assert_parity(data: &[u8]) {
         (Ok(expected), Ok((info, _))) => {
             let pixels = expected.into_buffer();
             assert_eq!((info.width, info.height), (pixels.width(), pixels.height()));
-            assert_eq!(sink.descriptor(), Some(pixels.descriptor()));
-            assert_eq!(sink.bytes(), pixels.into_parts().data);
+            assert_eq!(sink.descriptor(), Some(pixels.format().clone()));
+            assert_eq!(sink.bytes(), pixels.into_vec::<u8>().unwrap());
             assert!(sink.finished());
         }
         (Err(_), Err(zencodec_io::DriveError::Step(StepError::Codec(_)))) => {}
-        (expected, got) => panic!("one-shot/incremental outcome mismatch: {expected:?} / {got:?}"),
+        (expected, got) => panic!(
+            "one-shot/incremental outcome mismatch at {} bytes: {expected:?} / {got:?}",
+            data.len()
+        ),
     }
 }
 
@@ -274,11 +277,11 @@ impl zencodec::source::ReadAt for WindowSource<'_> {
 }
 
 fn assert_other_decode_paths(data: &[u8]) {
-    use zenpixels::PixelDescriptor;
+    use zenpixels::PixelFormat;
     for preferred in [
         &[][..],
-        &[PixelDescriptor::BGRA8_SRGB][..],
-        &[PixelDescriptor::RGBA8_SRGB][..],
+        &[PixelFormat::BGRA8_SRGB][..],
+        &[PixelFormat::RGBA8_SRGB][..],
     ] {
         let reference = D::new()
             .job()
@@ -295,16 +298,16 @@ fn assert_other_decode_paths(data: &[u8]) {
         let mut row = 0;
         while let Some((y, strip)) = stream.next_batch().unwrap() {
             assert_eq!(y, row);
-            assert_eq!(strip.descriptor(), reference.descriptor());
-            for r in 0..strip.rows() {
+            assert_eq!(strip.format(), reference.format());
+            for r in 0..strip.height() {
                 actual.extend_from_slice(strip.row(r));
             }
-            row += strip.rows();
+            row += strip.height();
         }
         assert_eq!(row, reference.height());
         let mut expected = Vec::new();
         for row in 0..reference.height() {
-            expected.extend_from_slice(reference.as_slice().row(row));
+            expected.extend_from_slice(reference.as_view().row(row));
         }
         assert_eq!(actual, expected);
         let mut animation = D::new()
@@ -312,9 +315,9 @@ fn assert_other_decode_paths(data: &[u8]) {
             .animation_frame_decoder(Cow::Borrowed(data), preferred)
             .unwrap();
         let frame = animation.render_next_frame_owned(None).unwrap().unwrap();
-        assert_eq!(frame.pixels().descriptor(), reference.descriptor());
+        assert_eq!(frame.pixels().format(), reference.format());
         for r in 0..reference.height() {
-            assert_eq!(frame.pixels().row(r), reference.as_slice().row(r));
+            assert_eq!(frame.pixels().row(r), reference.as_view().row(r));
         }
         tk::check_read_at_contract(
             &mut zencodec::source::ReadAtShim(WindowSource(zencodec::source::SliceReadAt::new(
@@ -335,8 +338,8 @@ fn assert_other_decode_paths(data: &[u8]) {
         )
         .unwrap();
         assert!(stats.reads > 0);
-        assert_eq!(sink.descriptor(), Some(reference.descriptor()));
-        assert_eq!(sink.bytes(), reference.into_parts().data);
+        assert_eq!(sink.descriptor(), Some(reference.format().clone()));
+        assert_eq!(sink.bytes(), reference.into_vec::<u8>().unwrap());
     }
 }
 
@@ -373,15 +376,15 @@ fn complete_animation_limits_are_checked_after_early_header() {
 }
 
 #[test]
-#[allow(deprecated)] // Intentional legacy metadata-setter coverage.
 fn structured_orientation_uses_exif_without_rotating_encoded_pixels() {
     use zencodec::{Metadata, MetadataPolicy, Orientation};
     let image = tk::TestImage::rgb8_gradient(19, 11);
     let bytes = E::lossless()
         .job()
-        .with_metadata_policy(
-            Metadata::none().with_orientation(Orientation::Rotate90),
-            MetadataPolicy::Web,
+        .with_unfiltered_metadata(
+            Metadata::none()
+                .with_orientation(Orientation::Rotate90)
+                .filtered(&MetadataPolicy::Web),
         )
         .encode(image.as_slice())
         .unwrap();

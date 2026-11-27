@@ -14,20 +14,20 @@ use zencodec::decode::{AnimationFrameDecoder as _, DecodeJob as _, DecoderConfig
 use zencodec::encode::{
     AnimationFrameEncoder as _, EncodeJob as _, Encoder as _, EncoderConfig as _,
 };
-use zenpixels::{PixelBuffer, PixelDescriptor};
+use zenpixels::{PixelBuf, PixelFormat};
 use zenwebp::zencodec::{WebpDecoderConfig, WebpEncoderConfig};
 
 const EXIF: &[u8] = b"Exif\0\0oracle-exif";
 const XMP: &[u8] = b"<x:xmpmeta>oracle</x:xmpmeta>";
 
-fn frame(seed: u8) -> PixelBuffer {
+fn frame(seed: u8) -> PixelBuf {
     let px: Vec<u8> = (0..8 * 8)
         .flat_map(|i| {
             let i = i as u8;
             [i.wrapping_mul(7) ^ seed, seed.wrapping_add(i), 255 - i, 255]
         })
         .collect();
-    PixelBuffer::from_vec(px, 8, 8, PixelDescriptor::RGBA8_SRGB).unwrap()
+    PixelBuf::from_bytes(px, 8, 8, PixelFormat::RGBA8_SRGB).unwrap()
 }
 
 /// libwebp frame durations: differences of `WebPAnimDecoderGetNext`'s end
@@ -44,19 +44,18 @@ fn libwebp_durations(frames: &[webpx::Frame]) -> Vec<u32> {
         .collect()
 }
 
-#[allow(deprecated)] // Intentional legacy metadata-setter coverage.
 fn encode(durations: &[u32], plays: u32, metadata: zencodec::Metadata) -> (Vec<u8>, Vec<Vec<u8>>) {
     let mut enc = WebpEncoderConfig::lossless()
         .job()
         .with_loop_count(Some(plays))
-        .with_metadata_policy(metadata, zencodec::MetadataPolicy::PreserveExact)
+        .with_unfiltered_metadata(metadata.filtered(&zencodec::MetadataPolicy::PreserveExact))
         .animation_frame_encoder()
         .unwrap();
     let mut sources = Vec::new();
     for (i, &ms) in durations.iter().enumerate() {
         let f = frame(i as u8 * 40 + 1);
-        sources.push(f.as_slice().as_strided_bytes().to_vec());
-        enc.push_frame_timed(f.as_slice(), FrameDuration::from_millis(ms), None)
+        sources.push(f.as_view().as_strided_bytes().to_vec());
+        enc.push_frame_timed(f.as_view(), FrameDuration::from_millis(ms), None)
             .unwrap();
     }
     (enc.finish(None).unwrap().data().to_vec(), sources)
@@ -92,7 +91,6 @@ fn animation_encode_round_trips_through_libwebp() {
 /// `WebPAnimEncoderAssemble` does (#11): byte-identical to the still encoder
 /// with the same metadata, and libwebp reads it as a non-animated image.
 #[test]
-#[allow(deprecated)] // Intentional legacy metadata-setter coverage.
 fn single_frame_animation_encodes_as_still() {
     let icc = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
     let metadata = || {
@@ -104,10 +102,10 @@ fn single_frame_animation_encodes_as_still() {
     let (data, sources) = encode(&[250], 2, metadata());
     let still = WebpEncoderConfig::lossless()
         .job()
-        .with_metadata_policy(metadata(), zencodec::MetadataPolicy::PreserveExact)
+        .with_unfiltered_metadata(metadata().filtered(&zencodec::MetadataPolicy::PreserveExact))
         .encoder()
         .unwrap()
-        .encode(frame(1).as_slice())
+        .encode(frame(1).as_view())
         .unwrap();
     assert!(
         data == still.data(),
@@ -171,7 +169,7 @@ fn animation_decode_matches_libwebp_and_keeps_icc() {
         .unwrap();
     let mut dec = WebpDecoderConfig::new()
         .job()
-        .animation_frame_decoder(Cow::Borrowed(&data), &[PixelDescriptor::RGBA8_SRGB])
+        .animation_frame_decoder(Cow::Borrowed(&data), &[PixelFormat::RGBA8_SRGB])
         .unwrap();
     let durations = libwebp_durations(&lib);
     assert_eq!(durations, [40, 60]);
@@ -179,10 +177,12 @@ fn animation_decode_matches_libwebp_and_keeps_icc() {
         let f = dec.render_next_frame(None).unwrap().unwrap();
         let px = f.pixels();
         assert_eq!(f.duration(), FrameDuration::from_millis(durations[i]));
-        let ctx = px.color_context().expect("frame carries a color context");
-        assert_eq!(ctx.icc.as_deref(), Some(icc), "frame {i} ICC");
+        let zenpixels::ColorSpace::Icc { profile, .. } = &px.format().color else {
+            panic!("frame carries an active ICC profile")
+        };
+        assert_eq!(profile.as_ref(), icc, "frame {i} ICC");
         let mut got = Vec::new();
-        for y in 0..px.rows() {
+        for y in 0..px.height() {
             got.extend_from_slice(px.row(y));
         }
         assert!(got == l.data, "frame {i} pixels");

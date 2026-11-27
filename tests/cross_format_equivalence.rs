@@ -1,6 +1,6 @@
 //! Cross-format input equivalence — the gap that hid the L8 lossy bug.
 //!
-//! Two `PixelDescriptor` / `PixelLayout` choices that describe the **same
+//! Two `PixelFormat` / `PixelLayout` choices that describe the **same
 //! image semantically** (e.g. `L8(g)` and `Rgba8(g, g, g, 255)`, or
 //! `Rgba8(r, g, b, a)` and `Bgra8(b, g, r, a)`) must produce **decoded
 //! outputs that match**:

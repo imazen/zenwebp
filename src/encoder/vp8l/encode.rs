@@ -98,10 +98,10 @@ pub(crate) fn encode_vp8l_with_alloc(
     {
         let dst_bytes: &mut [u8] = bytemuck::cast_slice_mut(&mut argb);
         if has_alpha {
-            garb::bytes::rgba_to_bgra(pixels, dst_bytes)
+            crate::packed_pixels::rgba_to_bgra(pixels, dst_bytes)
                 .expect("encode_vp8l: validated buffer sizes");
         } else {
-            garb::bytes::rgb_to_bgra(pixels, dst_bytes)
+            crate::packed_pixels::rgb_to_bgra(pixels, dst_bytes)
                 .expect("encode_vp8l: validated buffer sizes");
         }
     }

@@ -1,15 +1,17 @@
 //! Bridge byte-strided views to the native encoder's whole-pixel stride.
 use alloc::borrow::Cow;
-use zenpixels::PixelSlice;
+use zenpixels::PixelView;
 
-pub(super) fn whole_pixel_rows<'a>(pixels: &'a PixelSlice<'_>) -> (Cow<'a, [u8]>, usize) {
-    let pixel_size = pixels.descriptor().bytes_per_pixel();
-    if pixels.stride().is_multiple_of(pixel_size) {
-        (
+pub(super) fn whole_pixel_rows<'a>(
+    pixels: &PixelView<'a>,
+) -> Result<(Cow<'a, [u8]>, usize), whereat::At<zenpixels::BufferError>> {
+    let pixel_size = pixels.row_bytes() / pixels.width() as usize;
+    if pixels.stride_bytes().is_multiple_of(pixel_size) {
+        Ok((
             Cow::Borrowed(pixels.as_strided_bytes()),
-            pixels.stride() / pixel_size,
-        )
+            pixels.stride_bytes() / pixel_size,
+        ))
     } else {
-        (pixels.contiguous_bytes(), pixels.width() as usize)
+        Ok((pixels.to_contiguous_bytes()?, pixels.width() as usize))
     }
 }

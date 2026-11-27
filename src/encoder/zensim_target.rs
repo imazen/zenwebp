@@ -166,7 +166,7 @@ impl ZensimTarget {
 
 impl From<f32> for ZensimTarget {
     /// Build a `ZensimTarget` from a bare target value, using default
-    /// tolerances / passes. Lets [`LossyConfig::with_target_zensim`]
+    /// tolerances / passes. Lets [`LossyConfig::with_target_zensim`](crate::LossyConfig::with_target_zensim)
     /// accept either an `f32` or a fully-built `ZensimTarget`.
     fn from(target: f32) -> Self {
         Self::new(target)
@@ -215,7 +215,7 @@ impl ZensimTarget {
 /// `Ok` with this flag false. The independent `max_undershoot` error threshold
 /// applies to every budget, including one pass.
 ///
-/// Without an active target, [`Self::no_target`] returns a true flag and NaN score.
+/// Without an active target, `Self::no_target` returns a true flag and NaN score.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ZensimEncodeMetrics {

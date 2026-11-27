@@ -17,7 +17,7 @@ use std::borrow::Cow;
 
 use zencodec::decode::{Decode, DecodeJob, DecoderConfig};
 use zencodec::{Orientation, OrientationHint};
-use zenpixels::PixelDescriptor;
+use zenpixels::PixelFormat;
 use zenwebp::zencodec::WebpDecoderConfig;
 use zenwebp::{EncodeRequest, LosslessConfig, PixelLayout};
 
@@ -73,7 +73,7 @@ fn fixture_with_orientation(orientation: u16) -> Vec<u8> {
 /// Read an RGB pixel from a decoded RGB8 output.
 fn px(out: &zencodec::decode::DecodeOutput, x: u32, y: u32) -> [u8; 3] {
     let ps = out.pixels();
-    assert_eq!(ps.descriptor(), PixelDescriptor::RGB8_SRGB);
+    assert_eq!(ps.format(), &PixelFormat::RGB8_SRGB);
     let row = ps.row(y);
     let off = x as usize * 3;
     [row[off], row[off + 1], row[off + 2]]
@@ -108,7 +108,7 @@ fn orientation_preserve_decode_keeps_stored_pixels() {
     let data = fixture_with_orientation(6);
     let out = WebpDecoderConfig::new()
         .job()
-        .decoder(Cow::Borrowed(&data), &[PixelDescriptor::RGB8_SRGB])
+        .decoder(Cow::Borrowed(&data), &[PixelFormat::RGB8_SRGB])
         .expect("decoder")
         .decode()
         .expect("decode");
@@ -164,7 +164,7 @@ fn orientation_correct_decode_bakes_upright_pixels() {
     let out = WebpDecoderConfig::new()
         .job()
         .with_orientation(OrientationHint::Correct)
-        .decoder(Cow::Borrowed(&data), &[PixelDescriptor::RGB8_SRGB])
+        .decoder(Cow::Borrowed(&data), &[PixelFormat::RGB8_SRGB])
         .expect("decoder")
         .decode()
         .expect("decode");
@@ -186,7 +186,7 @@ fn orientation_correct_decode_bakes_upright_pixels() {
     let (sw, sh) = STORED;
     for sy in 0..sh {
         for sx in 0..sw {
-            let (dx, dy) = Orientation::Rotate90.forward_map(sx, sy, sw, sh);
+            let (dx, dy) = Orientation::Rotate90.map_pixel_coordinates((sx, sy), (sw, sh));
             assert_eq!(
                 px(&out, dx, dy),
                 color_at(sx, sy),
@@ -217,7 +217,7 @@ fn orientation_correct_on_upright_image_is_noop_but_reports_identity() {
     let out = WebpDecoderConfig::new()
         .job()
         .with_orientation(OrientationHint::Correct)
-        .decoder(Cow::Borrowed(&data), &[PixelDescriptor::RGB8_SRGB])
+        .decoder(Cow::Borrowed(&data), &[PixelFormat::RGB8_SRGB])
         .expect("decoder")
         .decode()
         .expect("decode");
@@ -240,7 +240,7 @@ fn orientation_exact_transform_ignores_exif() {
     let out = WebpDecoderConfig::new()
         .job()
         .with_orientation(OrientationHint::ExactTransform(Orientation::FlipH))
-        .decoder(Cow::Borrowed(&data), &[PixelDescriptor::RGB8_SRGB])
+        .decoder(Cow::Borrowed(&data), &[PixelFormat::RGB8_SRGB])
         .expect("decoder")
         .decode()
         .expect("decode");
@@ -253,8 +253,353 @@ fn orientation_exact_transform_ignores_exif() {
     let (sw, sh) = STORED;
     for sy in 0..sh {
         for sx in 0..sw {
-            let (dx, dy) = Orientation::FlipH.forward_map(sx, sy, sw, sh);
+            let (dx, dy) = Orientation::FlipH.map_pixel_coordinates((sx, sy), (sw, sh));
             assert_eq!(px(&out, dx, dy), color_at(sx, sy), "flipped ({sx},{sy})");
         }
     }
+}
+
+#[test]
+fn baked_orientation_retains_icc_origin_and_source_encoding() {
+    let profile = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
+    let data = fixture_with_orientation(6);
+    let data = zenwebp::metadata::embed_icc(&data, profile).expect("attach fixture ICC");
+    let out = WebpDecoderConfig::new()
+        .job()
+        .with_orientation(OrientationHint::CorrectAndTransform(Orientation::Rotate180))
+        .decoder(Cow::Borrowed(&data), &[PixelFormat::RGB8_SRGB])
+        .unwrap()
+        .decode()
+        .unwrap();
+
+    assert_eq!((out.width(), out.height()), DISPLAY);
+    assert_eq!(out.info().orientation, Orientation::Identity);
+    assert_eq!(out.buffer().origin().icc.as_deref(), Some(profile));
+    assert!(out.source_encoding_details().is_some());
+    let view = out.pixels();
+    let zenpixels::ColorSpace::Icc {
+        profile: active, ..
+    } = &view.format().color
+    else {
+        panic!("missing active RGB ICC");
+    };
+    assert_eq!(active.as_ref(), profile);
+    assert_eq!(view.format().layout, zenpixels::SampleLayout::RGBA8);
+    let (sw, sh) = STORED;
+    for y in 0..sh {
+        for x in 0..sw {
+            let (dx, dy) = Orientation::Rotate270.map_pixel_coordinates((x, y), (sw, sh));
+            let start = dx as usize * 4;
+            let [r, g, b] = color_at(x, y);
+            assert_eq!(&view.row(dy)[start..start + 4], &[r, g, b, 255]);
+        }
+    }
+}
+
+#[test]
+fn animation_encode_serializes_structured_orientation() {
+    use zencodec::encode::{AnimationFrameEncoder, EncodeJob, EncoderConfig};
+    use zenpixels::PixelView;
+    use zenwebp::zencodec::WebpEncoderConfig;
+
+    let mut encoder = WebpEncoderConfig::lossless()
+        .job()
+        .with_unfiltered_metadata(
+            zencodec::Metadata::none()
+                .with_orientation(Orientation::Rotate90)
+                .filtered(&zencodec::MetadataPolicy::PreserveExact),
+        )
+        .animation_frame_encoder()
+        .unwrap();
+    for bytes in [[20, 40, 60, 80, 100, 120], [121, 101, 81, 61, 41, 21]] {
+        let view = PixelView::from_bytes(&bytes, 2, 1, &zenpixels::formats::RGB8_SRGB).unwrap();
+        encoder.push_frame(view, 15, None).unwrap();
+    }
+    let output = encoder.finish(None).unwrap();
+    let demux = zenwebp::mux::WebPDemuxer::new(output.data()).unwrap();
+    let exif = demux
+        .exif()
+        .expect("structured orientation needs an EXIF chunk");
+    assert_eq!(
+        zencodec::helpers::parse_exif_orientation(exif),
+        Some(Orientation::Rotate90)
+    );
+}
+
+const FIRST: [[u8; 4]; 6] = [
+    [11, 21, 31, 255],
+    [42, 52, 62, 255],
+    [73, 83, 93, 255],
+    [104, 114, 124, 255],
+    [135, 145, 155, 255],
+    [166, 176, 186, 255],
+];
+
+fn rotate_clockwise(pixels: &[[u8; 4]; 6]) -> Vec<u8> {
+    [3, 0, 4, 1, 5, 2]
+        .into_iter()
+        .flat_map(|i| pixels[i])
+        .collect()
+}
+
+fn assert_frame_pixels(
+    view: &zenpixels::PixelView<'_>,
+    dims: (u32, u32),
+    expected: &[u8],
+    profile: &[u8],
+) {
+    assert_eq!((view.width(), view.height()), dims);
+    assert_eq!(view.format().layout, zenpixels::SampleLayout::RGBA8);
+    assert_eq!(view.origin().unwrap().icc.as_deref(), Some(profile));
+    let zenpixels::ColorSpace::Icc {
+        profile: active, ..
+    } = &view.format().color
+    else {
+        panic!("missing active ICC");
+    };
+    assert_eq!(active.as_ref(), profile);
+    for y in 0..dims.1 {
+        let stride = dims.0 as usize * 4;
+        assert_eq!(
+            view.row(y),
+            &expected[y as usize * stride..(y as usize + 1) * stride]
+        );
+    }
+}
+
+#[test]
+fn true_animation_applies_orientation_at_all_delivery_boundaries() {
+    use zencodec::animation::FrameDuration;
+    use zencodec::decode::AnimationFrameDecoder;
+    use zencodec::encode::{AnimationFrameEncoder, EncodeJob, EncoderConfig};
+    use zencodec::{Metadata, MetadataPolicy};
+    use zenwebp::zencodec::WebpEncoderConfig;
+
+    let profile = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
+    let second = FIRST.map(|[r, g, b, _]| [g, b, r, 181]);
+    let sources = [FIRST, second];
+    let mut encoder = WebpEncoderConfig::lossless()
+        .job()
+        .with_unfiltered_metadata(
+            Metadata::none()
+                .with_exif(complete_exif(6))
+                .with_icc(profile)
+                .filtered(&MetadataPolicy::PreserveExact),
+        )
+        .animation_frame_encoder()
+        .unwrap();
+    for (pixels, duration) in sources.iter().zip([17, 29]) {
+        let view = zenpixels::PixelView::from_bytes(
+            pixels.as_flattened(),
+            3,
+            2,
+            &zenpixels::formats::RGBA8_SRGB,
+        )
+        .unwrap();
+        encoder
+            .push_frame_timed(view, FrameDuration::from_millis(duration), None)
+            .unwrap();
+    }
+    let encoded = encoder.finish(None).unwrap();
+    let data = encoded.data();
+    let oracle = webpx::AnimationDecoder::new(data)
+        .unwrap()
+        .decode_all()
+        .unwrap();
+    assert_eq!(oracle.len(), 2);
+    assert_eq!(oracle[0].data, FIRST.as_flattened());
+    assert_eq!(oracle[1].data, second.as_flattened());
+
+    for (hint, dims, pending, applied) in [
+        (
+            OrientationHint::Preserve,
+            (3, 2),
+            Orientation::Rotate90,
+            Orientation::Identity,
+        ),
+        (
+            OrientationHint::Correct,
+            (2, 3),
+            Orientation::Identity,
+            Orientation::Rotate90,
+        ),
+    ] {
+        let job = WebpDecoderConfig::new().job().with_orientation(hint);
+        let info = job.probe(data).unwrap();
+        assert_eq!(
+            ((info.width, info.height), info.orientation),
+            (dims, pending)
+        );
+        let predicted = job.output_info(data).unwrap();
+        assert_eq!(
+            (
+                (predicted.width, predicted.height),
+                predicted.orientation_applied
+            ),
+            (dims, applied)
+        );
+        let mut borrowed = job
+            .clone()
+            .animation_frame_decoder(Cow::Borrowed(data), &[])
+            .unwrap();
+        let mut owned = job
+            .clone()
+            .animation_frame_decoder(Cow::Borrowed(data), &[])
+            .unwrap();
+        let mut sink_decoder = job
+            .animation_frame_decoder(Cow::Borrowed(data), &[])
+            .unwrap();
+        let info = borrowed.info();
+        assert_eq!(
+            ((info.width, info.height), info.orientation),
+            (dims, pending)
+        );
+
+        for (index, (source, millis)) in sources.iter().zip([17, 29]).enumerate() {
+            let duration = FrameDuration::from_millis(millis);
+            let expected = if applied == Orientation::Identity {
+                source.as_flattened().to_vec()
+            } else {
+                rotate_clockwise(source)
+            };
+            let frame = borrowed.render_next_frame(None).unwrap().unwrap();
+            assert_frame_pixels(frame.pixels(), dims, &expected, profile);
+            assert_eq!(
+                (frame.frame_index(), frame.duration(), frame.pts()),
+                (index as u32, duration, None)
+            );
+            let copy = frame.try_to_owned_frame().unwrap();
+            assert_frame_pixels(&copy.pixels(), dims, &expected, profile);
+            let frame = owned.render_next_frame_owned(None).unwrap().unwrap();
+            assert_frame_pixels(&frame.pixels(), dims, &expected, profile);
+            assert_eq!(
+                (frame.frame_index(), frame.duration(), frame.pts()),
+                (index as u32, duration, None)
+            );
+            let mut sink = zencodec_io::CollectSink::new();
+            let completed = sink_decoder
+                .render_next_frame_to_sink(None, &mut sink)
+                .unwrap()
+                .unwrap();
+            let timing = completed.frame.unwrap();
+            assert_eq!(
+                (timing.frame_index, timing.duration, timing.pts),
+                (index as u32, duration, None)
+            );
+            assert_eq!(
+                (
+                    (completed.width, completed.height),
+                    completed.orientation_applied
+                ),
+                (dims, applied)
+            );
+            assert_frame_pixels(
+                &sink.into_buffer().unwrap().as_view(),
+                dims,
+                &expected,
+                profile,
+            );
+        }
+        assert!(borrowed.render_next_frame(None).unwrap().is_none());
+        assert!(owned.render_next_frame_owned(None).unwrap().is_none());
+        assert!(
+            sink_decoder
+                .render_next_frame_to_sink(None, &mut zencodec_io::CollectSink::new())
+                .unwrap()
+                .is_none()
+        );
+    }
+}
+
+fn complete_exif(orientation: u16) -> Vec<u8> {
+    let mut exif = exif_with_orientation(orientation);
+    exif.extend_from_slice(&0u32.to_le_bytes()); // end of IFD chain
+    exif
+}
+
+// Read orientation directly from the little-endian IFD0 fixture extracted
+// by libwebp. The codec's EXIF orientation parser is independent of this check.
+fn fixture_exif_orientation(exif: &[u8]) -> Option<u16> {
+    let exif = exif.strip_prefix(b"Exif\0\0").unwrap_or(exif);
+    assert_eq!(&exif[..4], b"II*\0");
+    let offset = u32::from_le_bytes(exif[4..8].try_into().unwrap()) as usize;
+    let count = u16::from_le_bytes(exif[offset..offset + 2].try_into().unwrap()) as usize;
+    exif[offset + 2..offset + 2 + 12 * count]
+        .as_chunks::<12>()
+        .0
+        .iter()
+        .find_map(|entry| {
+            (entry[..2] == [0x12, 1]).then(|| {
+                assert_eq!(&entry[2..8], &[3, 0, 1, 0, 0, 0]);
+                u16::from_le_bytes(entry[8..10].try_into().unwrap())
+            })
+        })
+}
+
+#[test]
+fn correct_decode_reencode_reconciles_exif_and_keeps_icc_and_display_pixels() {
+    use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
+    use zenwebp::zencodec::WebpEncoderConfig;
+
+    let profile = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
+    let data = EncodeRequest::lossless(
+        &LosslessConfig::new().with_exact(true),
+        FIRST.as_flattened(),
+        PixelLayout::Rgba8,
+        3,
+        2,
+    )
+    .with_exif(&complete_exif(6))
+    .with_icc_profile(profile)
+    .encode()
+    .unwrap();
+    let decoder = || {
+        WebpDecoderConfig::new()
+            .job()
+            .with_orientation(OrientationHint::Correct)
+    };
+    let decoded = decoder()
+        .decoder(Cow::Borrowed(&data), &[])
+        .unwrap()
+        .decode()
+        .unwrap();
+    assert_eq!(decoded.info().orientation, Orientation::Identity);
+    assert_eq!(
+        fixture_exif_orientation(decoded.metadata().exif.as_deref().unwrap()),
+        Some(6)
+    );
+    assert_eq!(
+        fixture_exif_orientation(&webpx::get_exif(&data).unwrap().unwrap()),
+        Some(6)
+    );
+    let expected = rotate_clockwise(&FIRST);
+    assert_frame_pixels(&decoded.pixels(), (2, 3), &expected, profile);
+    let output = WebpEncoderConfig::lossless()
+        .job()
+        .with_unfiltered_metadata(
+            decoded
+                .metadata()
+                .filtered(&zencodec::MetadataPolicy::PreserveExact),
+        )
+        .encoder()
+        .unwrap()
+        .encode(decoded.pixels())
+        .unwrap();
+    let reencoded = output.data();
+    let emitted = webpx::get_exif(reencoded).unwrap();
+    assert!(matches!(
+        emitted.as_deref().and_then(fixture_exif_orientation),
+        None | Some(1)
+    ));
+    assert_eq!(
+        webpx::get_icc_profile(reencoded).unwrap().as_deref(),
+        Some(profile)
+    );
+    assert_eq!(webpx::decode_rgba(reencoded).unwrap().0, expected);
+    let decoded_again = decoder()
+        .decoder(Cow::Borrowed(reencoded), &[])
+        .unwrap()
+        .decode()
+        .unwrap();
+    assert_frame_pixels(&decoded_again.pixels(), (2, 3), &expected, profile);
 }

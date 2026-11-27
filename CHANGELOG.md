@@ -5,6 +5,14 @@ earlier history lives in git log and LOG.md.)
 
 ## [Unreleased]
 
+- Use zenpixels 0.5 and zencodec 0.3 for the shared WebP adapter.
+  Honor orientation hints on composited animation frames and retain the ICC
+  origin and source frame durations in all delivery forms.
+- Keep rendered RGB ICC bytes verbatim through lossless still and animation
+  encoding. PQ without an authored profile needs the `cms` ICC database.
+  Scene HLG needs a rendering-qualified ICC profile. Run `just color-contract-check`
+  to exercise both isolated feature configurations.
+
 - Remove VP8L predictor SIMD call shims on x86 and reduce Wasm decoder code
   duplication in loop-filter edges and chroma row loads/stores.
 
@@ -61,6 +69,11 @@ earlier history lives in git log and LOG.md.)
 - Admit archmage/magetypes 0.9.31-beta.1 alongside compatible stable versions; use explicit-token aliases where needed. Formatting, strict library lint and library tests pass (`ab50d43c`).
 
 ### QUEUED BREAKING CHANGES
+
+- The zencodec adapter uses zenpixels 0.5 `ImageSpec`, `PixelView` and
+  `PixelBuf`. ICC bytes that describe the current pixels live in
+  `ImageSpec::color`. Owned decoded buffers also retain their original color
+  metadata through channel swizzling and orientation correction.
 
 - zencodec 0.2 (operation Pulse): the jobs implement the required `with_pulse`, the animation calls take
   `Option<&dyn zencodec::Pulse>`, and the incremental decoder's `step` takes `Option<&dyn zencodec::Pulse>`. zenwebp requires

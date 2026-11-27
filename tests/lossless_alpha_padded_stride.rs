@@ -1,6 +1,6 @@
 //! Regression test for issue #10: lossless encoder with alpha + padded stride.
 //!
-//! Imageflow's pipeline feeds zenwebp a `PixelSlice` whose `stride` is larger
+//! Imageflow's pipeline feeds zenwebp a `PixelView` whose `stride` is larger
 //! than `width * bpp` because the backing `Bitmap` allocates padded rows for
 //! SIMD alignment. When the encoder is lossless and the image has an alpha
 //! channel, the output is catastrophically corrupted (horizontal banding,
@@ -10,7 +10,7 @@
 //!   synthetic lossless-alpha WebP
 //!     → `WebpDecoderConfig::push_decoder` (negotiates BGRA8)
 //!     → copy into Bitmap-like buffer with padded stride
-//!     → `WebpEncoderConfig::lossless().encode(PixelSlice)`
+//!     → `WebpEncoderConfig::lossless().encode(PixelView)`
 //!     → decode again, compare pixel-for-pixel.
 
 #![cfg(all(feature = "std", not(target_arch = "wasm32")))]
@@ -20,7 +20,7 @@ use std::borrow::Cow;
 use zencodec::decode::{DecodeJob, DecoderConfig as _};
 use zencodec::decode::{DecodeRowSink, SinkError};
 use zencodec::encode::{EncodeJob, Encoder, EncoderConfig as _};
-use zenpixels::{PixelDescriptor, PixelSlice, PixelSliceMut};
+use zenpixels::{PixelFormat, PixelView, PixelViewMut};
 use zenwebp::zencodec::{WebpDecoderConfig, WebpEncoderConfig};
 
 /// Build a small RGBA image with a gradient and varying alpha.
@@ -50,8 +50,14 @@ fn make_rgba_image(w: u32, h: u32) -> Vec<u8> {
 /// byte-exact roundtrip and the input contains α=0 pixels with nonzero RGB.
 fn rgba_to_lossless_webp(rgba: &[u8], w: u32, h: u32) -> Vec<u8> {
     let cfg = WebpEncoderConfig::lossless().with_exact(true);
-    let input_slice =
-        PixelSlice::new(rgba, w, h, (w as usize) * 4, PixelDescriptor::RGBA8_SRGB).expect("slice");
+    let input_slice = PixelView::new(
+        rgba,
+        w,
+        h,
+        (w as usize) * 4,
+        &zenpixels::formats::RGBA8_SRGB,
+    )
+    .expect("slice");
     cfg.job()
         .encoder()
         .expect("encoder")
@@ -66,7 +72,7 @@ struct CollectSink {
     buf: Vec<u8>,
     width: u32,
     height: u32,
-    descriptor: Option<PixelDescriptor>,
+    descriptor: Option<PixelFormat>,
     began: bool,
 }
 
@@ -83,16 +89,11 @@ impl CollectSink {
 }
 
 impl DecodeRowSink for CollectSink {
-    fn begin(
-        &mut self,
-        width: u32,
-        height: u32,
-        descriptor: PixelDescriptor,
-    ) -> Result<(), SinkError> {
+    fn begin(&mut self, width: u32, height: u32, descriptor: PixelFormat) -> Result<(), SinkError> {
         self.width = width;
         self.height = height;
-        self.descriptor = Some(descriptor);
-        let bpp = descriptor.bytes_per_pixel();
+        self.descriptor = Some(descriptor.clone());
+        let bpp = descriptor.layout.bytes_per_pixel();
         self.buf.clear();
         self.buf
             .resize((width as usize) * (height as usize) * bpp, 0);
@@ -102,22 +103,20 @@ impl DecodeRowSink for CollectSink {
 
     fn provide_next_buffer(
         &mut self,
-        y: u32,
-        height: u32,
-        width: u32,
-        descriptor: PixelDescriptor,
-    ) -> Result<PixelSliceMut<'_>, SinkError> {
+        strip: zencodec::decode::RowStrip,
+        descriptor: PixelFormat,
+    ) -> Result<PixelViewMut<'_>, SinkError> {
         assert!(self.began);
-        let bpp = descriptor.bytes_per_pixel();
-        let row_bytes = (width as usize) * bpp;
-        let start = (y as usize) * row_bytes;
-        let end = start + (height as usize) * row_bytes;
-        PixelSliceMut::new(
+        let bpp = descriptor.layout.bytes_per_pixel();
+        let row_bytes = (strip.width as usize) * bpp;
+        let start = (strip.y as usize) * row_bytes;
+        let end = start + (strip.height as usize) * row_bytes;
+        PixelViewMut::new_with_format_cow(
             &mut self.buf[start..end],
-            width,
-            height,
+            strip.width,
+            strip.height,
             row_bytes,
-            descriptor,
+            zenpixels::FormatCow::from_owned(descriptor),
         )
         .map_err(|e| SinkError::from(format!("slice: {e}")))
     }
@@ -128,13 +127,13 @@ impl DecodeRowSink for CollectSink {
 }
 
 /// Decode a WebP via `push_decoder`, preferring BGRA8_SRGB (imageflow's choice).
-fn push_decode_bgra(webp: &[u8]) -> (Vec<u8>, u32, u32, PixelDescriptor) {
+fn push_decode_bgra(webp: &[u8]) -> (Vec<u8>, u32, u32, PixelFormat) {
     let mut sink = CollectSink::new();
     let dec = WebpDecoderConfig::new();
     let preferred = [
-        PixelDescriptor::BGRA8_SRGB,
-        PixelDescriptor::RGBA8_SRGB,
-        PixelDescriptor::RGB8_SRGB,
+        PixelFormat::BGRA8_SRGB,
+        PixelFormat::RGBA8_SRGB,
+        PixelFormat::RGB8_SRGB,
     ];
     dec.job()
         .push_decoder(Cow::Borrowed(webp), &mut sink, &preferred)
@@ -182,7 +181,7 @@ fn end_to_end(w: u32, h: u32, padding_bytes: usize) -> (Vec<u8>, Vec<u8>) {
     assert_eq!((dw, dh), (w, h));
     assert_eq!(
         dec_desc,
-        PixelDescriptor::BGRA8_SRGB,
+        PixelFormat::BGRA8_SRGB,
         "expected BGRA8 negotiation"
     );
 
@@ -191,12 +190,12 @@ fn end_to_end(w: u32, h: u32, padding_bytes: usize) -> (Vec<u8>, Vec<u8>) {
     let padded_bgra = pad_stride(&decoded_buf, w, h, 4, stride_bytes);
 
     // Re-encode as lossless WebP directly from BGRA8 padded slice.
-    let input_slice = PixelSlice::new(
+    let input_slice = PixelView::new(
         &padded_bgra,
         w,
         h,
         stride_bytes,
-        PixelDescriptor::BGRA8_SRGB,
+        &zenpixels::formats::BGRA8_SRGB,
     )
     .expect("input slice");
     // Use the same quality imageflow passes (85.0) to exercise that code path.
@@ -267,7 +266,7 @@ fn lossless_alpha_imageflow_pattern_inplace_swizzle() {
     // Decode preferring BGRA8 — imageflow's decode output.
     let (decoded_bgra, dw, dh, dec_desc) = push_decode_bgra(&seed_webp);
     assert_eq!((dw, dh), (w, h));
-    assert_eq!(dec_desc, PixelDescriptor::BGRA8_SRGB);
+    assert_eq!(dec_desc, PixelFormat::BGRA8_SRGB);
 
     // Copy BGRA into imageflow-style padded-stride bitmap (64-byte row alignment).
     let bpp = 4;
@@ -282,11 +281,12 @@ fn lossless_alpha_imageflow_pattern_inplace_swizzle() {
     }
 
     // Swizzle BGRA→RGBA in-place — imageflow's exact preparation step.
+    #[allow(deprecated)] // The analyzer can enable garb experimental transitively.
     garb::bytes::bgra_to_rgba_inplace_strided(&mut padded, w as usize, h as usize, stride_bytes)
         .expect("in-place swizzle");
 
     // Encode as lossless with RGBA8_SRGB descriptor.
-    let slice = PixelSlice::new(&padded, w, h, stride_bytes, PixelDescriptor::RGBA8_SRGB)
+    let slice = PixelView::new(&padded, w, h, stride_bytes, &zenpixels::formats::RGBA8_SRGB)
         .expect("input slice");
     let cfg = WebpEncoderConfig::lossless()
         .with_exact(true)

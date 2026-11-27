@@ -1226,7 +1226,7 @@ impl<'a> EncodeRequest<'a> {
     /// closed-loop iteration (encode → decode → measure → adjust)
     /// transparently and returns the converged bytes. Use
     /// [`Self::encode_with_metrics`] if you also need the
-    /// [`ZensimEncodeMetrics`] (achieved score, passes used,
+    /// [`ZensimEncodeMetrics`](crate::ZensimEncodeMetrics) (achieved score, passes used,
     /// targets-met flag).
     #[track_caller]
     pub fn encode(self) -> EncodeResult<Vec<u8>> {
@@ -1260,7 +1260,7 @@ impl<'a> EncodeRequest<'a> {
         self.encode_inner()
     }
 
-    /// Encode to WebP bytes alongside [`ZensimEncodeMetrics`].
+    /// Encode to WebP bytes alongside [`ZensimEncodeMetrics`](crate::ZensimEncodeMetrics).
     ///
     /// When the lossy config has `target_zensim` set and the
     /// `target-zensim` crate feature is enabled (with [`PixelLayout::Rgb8`]
@@ -1269,7 +1269,7 @@ impl<'a> EncodeRequest<'a> {
     /// `targets_met` flag in the returned metrics. In every other case
     /// where iteration does not run (no target, feature disabled,
     /// lossless), the metrics are filled via
-    /// [`ZensimEncodeMetrics::no_target`] — score `NaN`,
+    /// `ZensimEncodeMetrics::no_target` — score `NaN`,
     /// `passes_used=1`, `targets_met=true`.
     ///
     /// Pixel layout: `target_zensim` supports [`PixelLayout::Rgb8`] and
@@ -1756,7 +1756,7 @@ fn convert_to_contiguous(
             // Convert BGRA to RGBA
             let mut out = alloc_px(npixels * 4)?;
             for y in 0..hh {
-                garb::bytes::bgra_to_rgba(
+                crate::packed_pixels::bgra_to_rgba(
                     &data[y * stride_bytes..y * stride_bytes + row_bytes],
                     &mut out[y * ww * 4..(y + 1) * ww * 4],
                 )
@@ -1768,7 +1768,7 @@ fn convert_to_contiguous(
             // Convert ARGB to RGBA
             let mut out = alloc_px(npixels * 4)?;
             for y in 0..hh {
-                garb::bytes::argb_to_rgba(
+                crate::packed_pixels::argb_to_rgba(
                     &data[y * stride_bytes..y * stride_bytes + row_bytes],
                     &mut out[y * ww * 4..(y + 1) * ww * 4],
                 )
@@ -1792,7 +1792,7 @@ fn convert_to_contiguous(
             // Grayscale+Alpha → RGBA
             let mut out = alloc_px(npixels * 4)?;
             for y in 0..hh {
-                garb::bytes::gray_alpha_to_rgba(
+                crate::packed_pixels::gray_alpha_to_rgba(
                     &data[y * stride_bytes..y * stride_bytes + row_bytes],
                     &mut out[y * ww * 4..(y + 1) * ww * 4],
                 )

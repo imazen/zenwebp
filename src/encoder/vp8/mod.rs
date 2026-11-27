@@ -1269,7 +1269,7 @@ impl<'a> Vp8Encoder<'a> {
                 crate::decoder::alloc_util::alloc_zeroed(params.alloc_pref, false, w * h * 4)
                     .map_err(super::api::alloc_failed_error)?;
             for y in 0..h {
-                garb::bytes::argb_to_rgba(
+                crate::packed_pixels::argb_to_rgba(
                     &data[y * stride_bytes..y * stride_bytes + row_bytes],
                     &mut out[y * w * 4..(y + 1) * w * 4],
                 )

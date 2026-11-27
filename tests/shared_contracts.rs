@@ -61,7 +61,7 @@ fn policy_and_inventory_contracts() {
     }
     for (policy, accepted) in [
         (DecodePolicy::none(), true),
-        (DecodePolicy::strict(), false),
+        (DecodePolicy::untrusted_minimal(), false),
     ] {
         tk::check_decode_policy_admission(
             D::new(),

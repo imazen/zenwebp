@@ -16,7 +16,7 @@ use zencodec::decode::{
     AnimationFrameDecoder as _, DecodeJob as _, DecodeRowSink, DecoderConfig as _,
 };
 use zencodec::encode::{AnimationFrameEncoder as _, EncodeJob as _, EncoderConfig as _};
-use zenpixels::{PixelBuffer, PixelDescriptor, PixelSliceMut};
+use zenpixels::{PixelBuf, PixelFormat, PixelViewMut};
 use zenwebp::mux::{AnimationConfig, AnimationEncoder};
 use zenwebp::zencodec::{WebpAnimationFrameDecoder, WebpAnimationFrameEncoder};
 use zenwebp::zencodec::{WebpDecoderConfig, WebpEncoderConfig};
@@ -112,24 +112,23 @@ fn category(error: whereat::At<zencodec::CodecError>) -> ErrorCategory {
 
 type Call = fn(
     &mut WebpAnimationFrameEncoder,
-    &PixelBuffer,
+    &PixelBuf,
     Option<&dyn zencodec::Pulse>,
 ) -> Result<(), ErrorCategory>;
 
 #[test]
 fn call_and_job_pulses_each_stop_the_animation_encoder() {
-    let px =
-        PixelBuffer::from_vec(pattern(32, 24, 9), 32, 24, PixelDescriptor::RGBA8_SRGB).unwrap();
+    let px = PixelBuf::from_bytes(pattern(32, 24, 9), 32, 24, PixelFormat::RGBA8_SRGB).unwrap();
     let calls: [(&str, Call); 3] = [
         ("push_frame", |e, px, p| {
-            e.push_frame(px.as_slice(), 20, p).map_err(category)
+            e.push_frame(px.as_view(), 20, p).map_err(category)
         }),
         ("push_frame_exact", |e, px, p| {
-            e.push_frame_exact(px.as_slice(), FrameDuration::new(30, 1000).unwrap(), p)
+            e.push_frame_exact(px.as_view(), FrameDuration::new(30, 1000).unwrap(), p)
                 .map_err(category)
         }),
         ("push_frame_timed", |e, px, p| {
-            e.push_frame_timed(px.as_slice(), FrameDuration::new(1, 30).unwrap(), p)
+            e.push_frame_timed(px.as_view(), FrameDuration::new(1, 30).unwrap(), p)
                 .map(drop)
                 .map_err(category)
         }),
@@ -160,7 +159,7 @@ fn call_and_job_pulses_each_stop_the_animation_encoder() {
                 call.set(false);
             }
             let mut encoder = new();
-            encoder.push_frame(px.as_slice(), 20, None).unwrap();
+            encoder.push_frame(px.as_view(), 20, None).unwrap();
             job.set(job_on);
             call.set(call_on == Some(true));
             assert_eq!(
@@ -181,15 +180,20 @@ struct Rows {
 impl DecodeRowSink for Rows {
     fn provide_next_buffer(
         &mut self,
-        _y: u32,
-        height: u32,
-        width: u32,
-        descriptor: PixelDescriptor,
-    ) -> Result<PixelSliceMut<'_>, zencodec::decode::SinkError> {
-        let stride = width as usize * descriptor.bytes_per_pixel();
-        self.buf.resize(height as usize * stride, 0);
-        self.rows += height;
-        Ok(PixelSliceMut::new(&mut self.buf, width, height, stride, descriptor).unwrap())
+        strip: zencodec::decode::RowStrip,
+        descriptor: PixelFormat,
+    ) -> Result<PixelViewMut<'_>, zencodec::decode::SinkError> {
+        let stride = strip.width as usize * descriptor.layout.bytes_per_pixel();
+        self.buf.resize(strip.height as usize * stride, 0);
+        self.rows += strip.height;
+        Ok(PixelViewMut::new_with_format_cow(
+            &mut self.buf,
+            strip.width,
+            strip.height,
+            stride,
+            zenpixels::FormatCow::from_owned(descriptor),
+        )
+        .unwrap())
     }
 }
 
