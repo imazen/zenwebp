@@ -174,8 +174,8 @@ fn zenwebp_bgra_dyn_dispatch_matches_libwebp_on_rose() {
     // Resolve the decoded frame into a buffer + descriptor.
     let px = output.pixels();
     let descriptor = px.format();
-    let (zw, zh) = (px.width(), px.rows());
-    let zen_bytes: Vec<u8> = px.contiguous_bytes().unwrap().into_owned();
+    let (zw, zh) = (px.width(), px.height());
+    let zen_bytes: Vec<u8> = px.to_contiguous_bytes().unwrap().into_owned();
     eprintln!(
         "zen dyn dispatch delivered {:?} at {}x{}",
         descriptor, zw, zh

@@ -184,7 +184,7 @@ fn animation_decode_matches_libwebp_and_keeps_icc() {
         };
         assert_eq!(profile.as_ref(), icc, "frame {i} ICC");
         let mut got = Vec::new();
-        for y in 0..px.rows() {
+        for y in 0..px.height() {
             got.extend_from_slice(px.row(y));
         }
         assert!(got == l.data, "frame {i} pixels");

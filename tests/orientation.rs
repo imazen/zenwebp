@@ -186,7 +186,7 @@ fn orientation_correct_decode_bakes_upright_pixels() {
     let (sw, sh) = STORED;
     for sy in 0..sh {
         for sx in 0..sw {
-            let (dx, dy) = Orientation::Rotate90.forward_map(sx, sy, sw, sh);
+            let (dx, dy) = Orientation::Rotate90.map_pixel_coordinates((sx, sy), (sw, sh));
             assert_eq!(
                 px(&out, dx, dy),
                 color_at(sx, sy),
@@ -253,7 +253,7 @@ fn orientation_exact_transform_ignores_exif() {
     let (sw, sh) = STORED;
     for sy in 0..sh {
         for sx in 0..sw {
-            let (dx, dy) = Orientation::FlipH.forward_map(sx, sy, sw, sh);
+            let (dx, dy) = Orientation::FlipH.map_pixel_coordinates((sx, sy), (sw, sh));
             assert_eq!(px(&out, dx, dy), color_at(sx, sy), "flipped ({sx},{sy})");
         }
     }
@@ -288,7 +288,7 @@ fn baked_orientation_retains_icc_origin_and_source_encoding() {
     let (sw, sh) = STORED;
     for y in 0..sh {
         for x in 0..sw {
-            let (dx, dy) = Orientation::Rotate270.forward_map(x, y, sw, sh);
+            let (dx, dy) = Orientation::Rotate270.map_pixel_coordinates((x, y), (sw, sh));
             let start = dx as usize * 4;
             let [r, g, b] = color_at(x, y);
             assert_eq!(&view.row(dy)[start..start + 4], &[r, g, b, 255]);
@@ -348,7 +348,7 @@ fn assert_frame_pixels(
     expected: &[u8],
     profile: &[u8],
 ) {
-    assert_eq!((view.width(), view.rows()), dims);
+    assert_eq!((view.width(), view.height()), dims);
     assert_eq!(view.format().layout, zenpixels::SampleLayout::RGBA8);
     assert_eq!(view.origin().unwrap().icc.as_deref(), Some(profile));
     let zenpixels::ColorSpace::Icc {

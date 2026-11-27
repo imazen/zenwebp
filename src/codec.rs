@@ -987,7 +987,7 @@ fn pixels_to_webp_input<'a>(
 ) -> Result<(alloc::borrow::Cow<'a, [u8]>, PixelLayout, u32, u32, usize), At<EncodeError>> {
     let desc = pixels.format();
     let w = pixels.width();
-    let h = pixels.rows();
+    let h = pixels.height();
 
     if !supports_still_input(desc) {
         return Err(at!(EncodeError::from(UnsupportedOperation::PixelFormat)));
@@ -1001,21 +1001,21 @@ fn pixels_to_webp_input<'a>(
             byte_stride::whole_pixel_rows(pixels).map_err(encode_buffer_error)?;
         Ok((bytes, PixelLayout::Rgba8, w, h, stride_pixels))
     } else if desc.layout == SampleLayout::BGRA8 {
-        let raw = pixels.contiguous_bytes().map_err(encode_buffer_error)?;
+        let raw = pixels.to_contiguous_bytes().map_err(encode_buffer_error)?;
         let mut rgba = alloc::vec![0u8; raw.len()];
         crate::packed_pixels::bgra_to_rgba(&raw, &mut rgba)
             .map_err(|e| EncodeError::InvalidBufferSize(alloc::format!("pixel conversion: {e}")))?;
         Ok((Cow::Owned(rgba), PixelLayout::Rgba8, w, h, w as usize))
     } else if desc.layout == SampleLayout::RGBX8 {
         // Byte 3 is padding — strip to 3-channel RGB.
-        let raw = pixels.contiguous_bytes().map_err(encode_buffer_error)?;
+        let raw = pixels.to_contiguous_bytes().map_err(encode_buffer_error)?;
         let mut rgb = alloc::vec![0u8; (w as usize) * (h as usize) * 3];
         crate::packed_pixels::rgba_to_rgb(&raw, &mut rgb)
             .map_err(|e| EncodeError::InvalidBufferSize(alloc::format!("pixel conversion: {e}")))?;
         Ok((Cow::Owned(rgb), PixelLayout::Rgb8, w, h, w as usize))
     } else if desc.layout == SampleLayout::BGRX8 {
         // BGRA layout with padding byte — strip to 3-channel RGB via swap.
-        let raw = pixels.contiguous_bytes().map_err(encode_buffer_error)?;
+        let raw = pixels.to_contiguous_bytes().map_err(encode_buffer_error)?;
         let mut rgb = alloc::vec![0u8; (w as usize) * (h as usize) * 3];
         crate::packed_pixels::bgra_to_rgb(&raw, &mut rgb)
             .map_err(|e| EncodeError::InvalidBufferSize(alloc::format!("pixel conversion: {e}")))?;
@@ -1033,19 +1033,19 @@ fn pixels_to_webp_input<'a>(
             byte_stride::whole_pixel_rows(pixels).map_err(encode_buffer_error)?;
         Ok((bytes, PixelLayout::La8, w, h, stride_pixels))
     } else if *desc == PixelFormat::RGBF32_LINEAR {
-        let raw = pixels.contiguous_bytes().map_err(encode_buffer_error)?;
+        let raw = pixels.to_contiguous_bytes().map_err(encode_buffer_error)?;
         let floats = as_f32_slice(&raw);
         let mut rgb = alloc::vec![0u8; floats.len()];
         linear_srgb::default::linear_to_srgb_u8_slice(&floats, &mut rgb);
         Ok((Cow::Owned(rgb), PixelLayout::Rgb8, w, h, w as usize))
     } else if *desc == PixelFormat::RGBAF32_LINEAR {
-        let raw = pixels.contiguous_bytes().map_err(encode_buffer_error)?;
+        let raw = pixels.to_contiguous_bytes().map_err(encode_buffer_error)?;
         let floats = as_f32_slice(&raw);
         let mut rgba = alloc::vec![0u8; floats.len()];
         linear_srgb::default::linear_to_srgb_u8_rgba_slice(&floats, &mut rgba);
         Ok((Cow::Owned(rgba), PixelLayout::Rgba8, w, h, w as usize))
     } else if *desc == PixelFormat::GRAYF32_LINEAR {
-        let raw = pixels.contiguous_bytes().map_err(encode_buffer_error)?;
+        let raw = pixels.to_contiguous_bytes().map_err(encode_buffer_error)?;
         let floats = as_f32_slice(&raw);
         let mut gray_u8 = alloc::vec![0u8; floats.len()];
         linear_srgb::default::linear_to_srgb_u8_slice(&floats, &mut gray_u8);
@@ -1134,7 +1134,7 @@ impl zencodec::encode::Encoder for WebpEncoder {
                 "rows do not match the declared canvas or prior strips".into()
             )))
         };
-        let strip_h = rows.rows();
+        let strip_h = rows.height();
         if let Some(pulse) = self.pulse.as_ref() {
             enough::Stop::check(pulse)
                 .map_err(|e| zencodec::CodecError::of(at!(EncodeError::from(e))))?;
@@ -1398,7 +1398,10 @@ impl zencodec::encode::AnimationFrameEncoder for WebpAnimationFrameEncoder {
             .ok_or_else(|| Self::reject(UnsupportedOperation::AnimationTiming))?;
         self.limits
             .check_frames(frames)
-            .and_then(|_| self.limits.check_dimensions(pixels.width(), pixels.rows()))
+            .and_then(|_| {
+                self.limits
+                    .check_dimensions(pixels.width(), pixels.height())
+            })
             .map_err(|e| {
                 zencodec::CodecError::of(at!(EncodeError::LimitExceeded(
                     e.kind(),
@@ -1407,7 +1410,7 @@ impl zencodec::encode::AnimationFrameEncoder for WebpAnimationFrameEncoder {
             })?;
         if self
             .canvas_size
-            .is_some_and(|size| size != (pixels.width(), pixels.rows()))
+            .is_some_and(|size| size != (pixels.width(), pixels.height()))
         {
             return Err(zencodec::CodecError::of(at!(
                 EncodeError::InvalidDimensions
@@ -1441,7 +1444,7 @@ impl zencodec::encode::AnimationFrameEncoder for WebpAnimationFrameEncoder {
             ChannelOrder::GrayAlpha => PixelLayout::La8,
             _ => return Err(Self::reject(UnsupportedOperation::PixelFormat)),
         };
-        let (w, h) = (pixels.width(), pixels.rows());
+        let (w, h) = (pixels.width(), pixels.height());
         let buf = alloc::borrow::Cow::Borrowed(pixels.as_strided_bytes());
         let retained = self
             .anim_enc
@@ -1469,10 +1472,10 @@ impl zencodec::encode::AnimationFrameEncoder for WebpAnimationFrameEncoder {
         // may be larger than width * bytes_per_pixel.
         let bpp = layout.bytes_per_pixel();
         let dst_stride_bytes = w as usize * bpp;
-        let buf: alloc::borrow::Cow<'_, [u8]> = if pixels.stride() == dst_stride_bytes {
+        let buf: alloc::borrow::Cow<'_, [u8]> = if pixels.stride_bytes() == dst_stride_bytes {
             buf
         } else {
-            let src_stride_bytes = pixels.stride();
+            let src_stride_bytes = pixels.stride_bytes();
             let mut packed = Vec::new();
             packed
                 .try_reserve_exact(dst_stride_bytes * h as usize)
@@ -2737,7 +2740,7 @@ fn push_full_image_to_sink<'a>(
     // rejects the container. Treat the completed decode as authoritative.
     let (output, orientation) = job.decoder(data, preferred)?.decode_with_orientation()?;
     let view = output.pixels();
-    let (width, height, spec) = (view.width(), view.rows(), view.format().clone());
+    let (width, height, spec) = (view.width(), view.height(), view.format().clone());
     sink.begin(width, height, spec.clone())
         .map_err(wrap_sink_to_codec)?;
     zencodec::helpers::copy_rows_to_sink(sink, zencodec::decode::BatchMeta::final_rows(0), &view)
@@ -3754,7 +3757,7 @@ fn resolve_webp_icc<'a>(
         // declaration for RGB byte views made with the default spec.
         current = ColorSpace::Icc {
             profile: icc.clone(),
-            channels: 3,
+            color_channels: 3,
             alpha,
             intent: zenpixels::RenderingIntent::RelativeColorimetric,
         };
@@ -3810,7 +3813,7 @@ fn resolve_webp_icc<'a>(
                     cicp.transfer_characteristics,
                     if cicp.transfer_characteristics == 18 {
                         "supply an ICC profile with explicit HLG rendering or convert to a supported output"
-                    } else if matches!(outcome, SynthesizedIcc::NeedsCms) {
+                    } else if matches!(outcome, SynthesizedIcc::IccDbDisabled) {
                         "enable cms (ICC database) or supply an RGB ICC profile"
                     } else {
                         "supply an RGB ICC profile or convert to a supported output"
@@ -4432,7 +4435,7 @@ mod tests {
         assert_eq!(encoder.preferred_strip_height(), 2);
 
         // Push 32 strips of 2 rows each
-        let raw = buf.as_view().contiguous_bytes().unwrap();
+        let raw = buf.as_view().to_contiguous_bytes().unwrap();
         let raw = raw.as_ref();
         let row_bytes = 64 * 3;
         for y in (0..64).step_by(2) {
@@ -4466,7 +4469,7 @@ mod tests {
         let mut encoder = config.job().with_canvas_size(32, 33).encoder().unwrap();
 
         // Push one row at a time: 16 pairs + 1 leftover
-        let raw = buf.as_view().contiguous_bytes().unwrap();
+        let raw = buf.as_view().to_contiguous_bytes().unwrap();
         let raw = raw.as_ref();
         let row_bytes = 32 * 3;
         for y in 0..33usize {
@@ -4496,7 +4499,7 @@ mod tests {
         let mut encoder = config.job().with_canvas_size(16, 16).encoder().unwrap();
         assert_eq!(encoder.preferred_strip_height(), 1);
 
-        let raw = buf.as_view().contiguous_bytes().unwrap();
+        let raw = buf.as_view().to_contiguous_bytes().unwrap();
         let raw = raw.as_ref();
         let row_bytes = 16 * 4;
         for y in 0..16usize {
@@ -4634,7 +4637,7 @@ mod tests {
         let mut total_rows = 0u32;
         let mut last_y = 0u32;
         while let Some((y, strip)) = stream.next_batch().unwrap() {
-            assert!(strip.rows() > 0, "strip should have rows");
+            assert!(strip.height() > 0, "strip should have rows");
             assert_eq!(strip.width(), 64);
             if total_rows > 0 {
                 assert!(
@@ -4643,7 +4646,7 @@ mod tests {
                 );
             }
             last_y = y;
-            total_rows += strip.rows();
+            total_rows += strip.height();
         }
         assert_eq!(total_rows, 64, "should have decoded all 64 rows");
 
@@ -4685,7 +4688,7 @@ mod tests {
         while let Some((y, strip)) = stream.next_batch().unwrap() {
             let y = y as usize;
             let row_bytes = oneshot_width as usize * bpp;
-            for row in 0..strip.rows() as usize {
+            for row in 0..strip.height() as usize {
                 let src = strip.row(row as u32);
                 let dst_start = (y + row) * row_bytes;
                 assembled[dst_start..dst_start + row_bytes].copy_from_slice(src);
@@ -4723,7 +4726,7 @@ mod tests {
         let mut total_rows = 0u32;
         let mut batch_count = 0u32;
         while let Some((_y, strip)) = stream.next_batch().unwrap() {
-            total_rows += strip.rows();
+            total_rows += strip.height();
             batch_count += 1;
         }
         assert_eq!(total_rows, 96);
@@ -4747,7 +4750,7 @@ mod tests {
             .unwrap();
         let (y, pixels) = stream.next_batch().unwrap().unwrap();
         assert_eq!(y, 0);
-        assert_eq!(pixels.rows(), 8);
+        assert_eq!(pixels.height(), 8);
         assert_eq!(pixels.format(), &PixelFormat::RGBA8_SRGB);
         for row in 0..8 {
             assert_eq!(pixels.row(row), buf.as_view().row(row));
@@ -4786,7 +4789,7 @@ mod tests {
                     expected_row_bytes,
                     "should be 4bpp RGBA"
                 );
-                total_rows += strip.rows();
+                total_rows += strip.height();
             }
             assert_eq!(total_rows, 32);
         }

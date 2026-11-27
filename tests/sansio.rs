@@ -299,10 +299,10 @@ fn assert_other_decode_paths(data: &[u8]) {
         while let Some((y, strip)) = stream.next_batch().unwrap() {
             assert_eq!(y, row);
             assert_eq!(strip.format(), reference.format());
-            for r in 0..strip.rows() {
+            for r in 0..strip.height() {
                 actual.extend_from_slice(strip.row(r));
             }
-            row += strip.rows();
+            row += strip.height();
         }
         assert_eq!(row, reference.height());
         let mut expected = Vec::new();

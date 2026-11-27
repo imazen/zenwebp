@@ -87,7 +87,7 @@ fn pixel_decodes_of_animated_files_return_the_first_frame() {
         .unwrap();
     let px = out.pixels();
     let mut got = Vec::new();
-    for y in 0..px.rows() {
+    for y in 0..px.height() {
         got.extend_from_slice(px.row(y));
     }
     assert!(

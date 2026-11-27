@@ -278,7 +278,7 @@ fn zencodec_jobs_report_through_with_pulse() {
         .unwrap()
         .decode()
         .unwrap();
-    assert_eq!(out.pixels().rows(), 48);
+    assert_eq!(out.pixels().height(), 48);
     assert_eq!(observed(&t), (Total::Exact(48), 48));
 
     // Animation decode: frames.

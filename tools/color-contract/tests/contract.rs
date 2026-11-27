@@ -111,7 +111,7 @@ fn hlg_requires_rendering_and_preserves_an_explicit_rendered_profile() {
     );
     let rendered = ColorSpace::Icc {
         profile: profile.clone(),
-        channels: 3,
+        color_channels: 3,
         alpha: AlphaMode::None,
         intent: RenderingIntent::RelativeColorimetric,
     };

@@ -191,7 +191,7 @@ fn still_decoder_views_keep_icc_context_and_bgra_pixels() {
             .decode()
             .unwrap()
             .pixels()
-            .contiguous_bytes()
+            .to_contiguous_bytes()
             .unwrap()
             .into_owned();
         for allow_icc in [None, Some(true), Some(false)] {
@@ -222,7 +222,7 @@ fn still_decoder_views_keep_icc_context_and_bgra_pixels() {
                     }
                 }
                 assert_eq!(
-                    decoded.pixels().contiguous_bytes().unwrap().as_ref(),
+                    decoded.pixels().to_contiguous_bytes().unwrap().as_ref(),
                     expected
                 );
                 let view = decoded.pixels();
@@ -262,7 +262,7 @@ fn still_decoder_views_keep_icc_context_and_bgra_pixels() {
                 let mut streamed = Vec::new();
                 while let Some((_, batch)) = streaming.next_batch().unwrap() {
                     check(&batch);
-                    streamed.extend_from_slice(&batch.contiguous_bytes().unwrap());
+                    streamed.extend_from_slice(&batch.to_contiguous_bytes().unwrap());
                 }
                 assert_eq!(streamed, expected);
                 let mut animation = job()
@@ -271,7 +271,7 @@ fn still_decoder_views_keep_icc_context_and_bgra_pixels() {
                 let frame = animation.render_next_frame(None).unwrap().unwrap();
                 check(frame.pixels());
                 assert_eq!(
-                    frame.pixels().contiguous_bytes().unwrap().as_ref(),
+                    frame.pixels().to_contiguous_bytes().unwrap().as_ref(),
                     expected
                 );
                 assert!(animation.render_next_frame(None).unwrap().is_none());

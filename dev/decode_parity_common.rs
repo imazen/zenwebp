@@ -383,7 +383,7 @@ pub fn zen_decode(mode: &str, data: &[u8]) -> Out {
         "zc_decode" => {
             let out = Zc::new().decode(data).map_err(e)?;
             let px = out.pixels();
-            let (w, h) = (px.width(), px.rows());
+            let (w, h) = (px.width(), px.height());
             let layout = desc_layout(px.format().clone())?;
             let bpp = px.format().layout.bytes_per_pixel();
             let mut tight = Vec::with_capacity(w as usize * h as usize * bpp);
