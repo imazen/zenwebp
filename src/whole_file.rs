@@ -116,8 +116,8 @@ where
         self.inner.info()
     }
 
-    fn output_descriptor(&self) -> Option<PixelFormat> {
-        self.inner.output_descriptor()
+    fn output_pixel_format(&self) -> Option<PixelFormat> {
+        self.inner.output_pixel_format()
     }
 
     fn access_pattern(&self) -> zencodec::source::AccessPattern {

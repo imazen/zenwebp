@@ -432,7 +432,7 @@ impl zencodec::encode::EncoderConfig for WebpEncoderConfig {
         ImageFormat::WebP
     }
 
-    fn supported_descriptors() -> &'static [PixelFormat] {
+    fn supported_pixel_formats() -> &'static [PixelFormat] {
         ENCODE_DESCRIPTORS
     }
 
@@ -576,15 +576,15 @@ impl zencodec::encode::EncoderConfig for WebpEncoderConfig {
         compute: &zencodec::estimate::ComputeEnvironment,
     ) -> zencodec::estimate::ResourceEstimate {
         use zencodec::estimate::{ResourceEstimate, ThreadingInformation};
-        let bpp = image.descriptor().layout.bytes_per_pixel() as u8;
+        let bpp = image.pixel_format().layout.bytes_per_pixel() as u8;
         // zenwebp encode is single-threaded; model it as SERIAL.
         let e = crate::heuristics::estimate_encode(image.width(), image.height(), bpp, &self.inner);
         // heuristics models the encoder's working set (VmHWM marginal); the zencodec
         // convention (ResourceEstimate::conservative) is total peak = input buffer
         // (held by the caller during encode) + working, so add the input buffer.
-        let input = image.input_bytes();
+        let input = image.uncompressed_frame_bytes();
         ResourceEstimate::new(e.peak_memory_bytes.saturating_add(input), e.time_ms as u64)
-            .with_peak_max(e.peak_memory_bytes_max.saturating_add(input))
+            .with_peak_memory_bytes_max(e.peak_memory_bytes_max.saturating_add(input))
             .with_threading(ThreadingInformation::SERIAL)
             .at_cores(compute.cores())
     }
@@ -727,18 +727,25 @@ impl zencodec::encode::EncodeJob for WebpEncodeJob {
         self
     }
 
-    fn with_policy(mut self, policy: zencodec::encode::EncodePolicy) -> Self {
+    fn try_set_policy(
+        &mut self,
+        policy: zencodec::encode::EncodePolicy,
+    ) -> Result<(), UnsupportedOperation> {
+        use zencodec::encode::EncodePolicy;
+        if policy == EncodePolicy::none() {
+            self.policy = None;
+            return Ok(());
+        }
+        let mut admitted = EncodePolicy::none();
+        admitted.color = policy.color;
+        if admitted != policy {
+            return Err(UnsupportedOperation::EncodePolicy);
+        }
         self.policy = Some(policy);
-        self
+        Ok(())
     }
 
-    // Required by the trait (codecs must store the bytes). Callers should prefer
-    // the provided `with_metadata_policy`, which filters via `Metadata::filtered`
-    // (sub-field EXIF retention + orientation-tag reconciliation) before handing
-    // the result here. `#[allow(deprecated)]` because the trait method itself
-    // carries `#[deprecated]`.
-    #[allow(deprecated)]
-    fn with_metadata(mut self, meta: Metadata) -> Self {
+    fn with_unfiltered_metadata(mut self, meta: Metadata) -> Self {
         self.icc = meta.icc_profile;
         self.exif = meta.exif;
         self.xmp = meta.xmp;
@@ -1344,7 +1351,7 @@ impl zencodec::encode::AnimationFrameEncoder for WebpAnimationFrameEncoder {
         duration: zencodec::animation::FrameDuration,
         pulse: Option<&dyn zencodec::Pulse>,
     ) -> Result<zencodec::animation::FrameDuration, Self::Error> {
-        let mut timing = self.timing;
+        let mut timing = self.timing.clone();
         let encoded = timing
             .quantize(duration)
             .map_err(|_| Self::reject(UnsupportedOperation::AnimationTiming))?;
@@ -1674,7 +1681,7 @@ impl zencodec::decode::DecoderConfig for WebpDecoderConfig {
         &[ImageFormat::WebP]
     }
 
-    fn supported_descriptors() -> &'static [PixelFormat] {
+    fn supported_pixel_formats() -> &'static [PixelFormat] {
         DECODE_DESCRIPTORS
     }
 
@@ -1688,7 +1695,7 @@ impl zencodec::decode::DecoderConfig for WebpDecoderConfig {
         compute: &zencodec::estimate::ComputeEnvironment,
     ) -> zencodec::estimate::ResourceEstimate {
         use zencodec::estimate::{ResourceEstimate, ThreadingInformation};
-        let bpp = image.descriptor().layout.bytes_per_pixel() as u8;
+        let bpp = image.pixel_format().layout.bytes_per_pixel() as u8;
         // `estimate_decode` returns the VP8 working set (fixed decoder state +
         // ~12 B/px for the row cache, reconstruction buffer and loop-filter
         // accumulator) separately from the output buffer; peak holds both at
@@ -2017,9 +2024,25 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
         self
     }
 
-    fn with_policy(mut self, policy: zencodec::decode::DecodePolicy) -> Self {
+    fn try_set_policy(
+        &mut self,
+        policy: zencodec::decode::DecodePolicy,
+    ) -> Result<(), UnsupportedOperation> {
+        use zencodec::decode::DecodePolicy;
+        if policy == DecodePolicy::none() {
+            self.policy = None;
+            return Ok(());
+        }
+        let mut admitted = DecodePolicy::none();
+        admitted.allow_icc = policy.allow_icc;
+        admitted.allow_exif = policy.allow_exif;
+        admitted.allow_xmp = policy.allow_xmp;
+        admitted.allow_animation = policy.allow_animation;
+        if admitted != policy {
+            return Err(UnsupportedOperation::DecodePolicy);
+        }
         self.policy = Some(policy);
-        self
+        Ok(())
     }
 
     fn with_orientation(mut self, hint: OrientationHint) -> Self {
@@ -2158,7 +2181,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
             desc = PixelFormat::BGRA8_SRGB;
         }
         let info = to_image_info(&native, None);
-        desc = zencodec::helpers::descriptor_for_decoded_pixels_v2(
+        desc = zencodec::helpers::pixel_format_for_decoded_pixels(
             desc.layout,
             &info.source_color,
             None,
@@ -2325,7 +2348,7 @@ impl<'a> zencodec::decode::DecodeJob<'a> for WebpDecodeJob {
                 random_access: false,
             })
         };
-        let source_desc = zencodec::helpers::descriptor_for_decoded_pixels_v2(
+        let source_desc = zencodec::helpers::pixel_format_for_decoded_pixels(
             if anim_info.has_alpha {
                 SampleLayout::RGBA8
             } else {
@@ -2552,7 +2575,7 @@ impl WebpDecoder<'_> {
                 .with_bit_depth(8)
                 .with_channel_count(if has_alpha { 4 } else { 3 })
         };
-        let descriptor = zencodec::helpers::descriptor_for_decoded_pixels_v2(
+        let descriptor = zencodec::helpers::pixel_format_for_decoded_pixels(
             buf.format().layout,
             &info.source_color,
             None,
@@ -2617,7 +2640,7 @@ impl WebpDecoder<'_> {
                 .with_bit_depth(8)
                 .with_channel_count(if has_alpha { 4 } else { 3 })
         };
-        let descriptor = zencodec::helpers::descriptor_for_decoded_pixels_v2(
+        let descriptor = zencodec::helpers::pixel_format_for_decoded_pixels(
             buf.format().layout,
             &info.source_color,
             None,
@@ -3016,7 +3039,7 @@ impl Vp8StreamingDecoder {
             descriptor = PixelFormat::BGRA8_SRGB;
         }
 
-        descriptor = zencodec::helpers::descriptor_for_decoded_pixels_v2(
+        descriptor = zencodec::helpers::pixel_format_for_decoded_pixels(
             descriptor.layout,
             &info.source_color,
             None,
@@ -4292,17 +4315,19 @@ mod tests {
     }
 
     #[test]
-    fn encode_srgba8() {
+    fn encode_in_place() {
         let mut data = vec![0u8; 16 * 16 * 4];
         for chunk in data.as_chunks_mut::<4>().0 {
             *chunk = [100, 150, 200, 255];
         }
+        let format = PixelFormat::RGBA8_SRGB;
+        let view = zenpixels::PixelViewMut::new(&mut data, 16, 16, 16 * 4, &format).unwrap();
         let config = WebpEncoderConfig::lossy().with_quality(75.0);
         let output = config
             .job()
             .encoder()
             .unwrap()
-            .encode_srgba8(&mut data, false, 16, 16, 16)
+            .encode_in_place(view)
             .unwrap();
         assert!(!output.is_empty());
     }
@@ -4843,25 +4868,23 @@ mod tests {
 
         fn provide_next_buffer(
             &mut self,
-            y: u32,
-            height: u32,
-            width: u32,
+            strip: zencodec::decode::RowStrip,
             descriptor: PixelFormat,
         ) -> Result<zenpixels::PixelViewMut<'_>, SinkError> {
             assert!(self.began, "provide_next_buffer before begin");
             assert!(!self.finished, "provide_next_buffer after finish");
-            assert_eq!(width, self.width);
+            assert_eq!(strip.width, self.width);
             assert_eq!(Some(&descriptor), self.descriptor.as_ref());
             let bpp = descriptor.layout.bytes_per_pixel();
-            let row_bytes = (width as usize) * bpp;
-            let start = (y as usize) * row_bytes;
-            let end = start + (height as usize) * row_bytes;
+            let row_bytes = (strip.width as usize) * bpp;
+            let start = (strip.y as usize) * row_bytes;
+            let end = start + (strip.height as usize) * row_bytes;
             assert!(end <= self.buf.len(), "strip exceeds buffer");
             self.strips_received += 1;
             let slice = zenpixels::PixelViewMut::new(
                 &mut self.buf[start..end],
-                width,
-                height,
+                strip.width,
+                strip.height,
                 row_bytes,
                 self.descriptor.as_ref().unwrap(),
             )
@@ -5192,7 +5215,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)] // Intentional legacy metadata setter, as in the RGB controls.
     fn gray_cicp_keeps_pixels_and_rgb_icc_through_encode() {
         for alpha in [false, true] {
             let descriptor = if alpha {
@@ -5219,9 +5241,10 @@ mod tests {
             }
             let output = WebpEncoderConfig::lossless()
                 .job()
-                .with_metadata_policy(
-                    Metadata::none().with_cicp(Cicp::DISPLAY_P3),
-                    zencodec::MetadataPolicy::PreserveExact,
+                .with_unfiltered_metadata(
+                    Metadata::none()
+                        .with_cicp(Cicp::DISPLAY_P3)
+                        .filtered(&zencodec::MetadataPolicy::PreserveExact),
                 )
                 .encoder()
                 .unwrap()
@@ -5251,13 +5274,12 @@ mod tests {
     /// assumed default and the bundled table has no sRGB profile, so synthesizing
     /// one would be redundant bytes. (Guards against over-eager synthesis.)
     #[test]
-    #[allow(deprecated)] // Intentional legacy metadata-setter coverage.
     fn cicp_only_srgb_source_embeds_no_icc() {
         let buf = make_rgb8_pixels(32, 32);
         let meta = Metadata::none().with_cicp(Cicp::SRGB);
         let out = WebpEncoderConfig::lossless()
             .job()
-            .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact)
+            .with_unfiltered_metadata(meta.filtered(&zencodec::MetadataPolicy::PreserveExact))
             .encoder()
             .unwrap()
             .encode(buf.as_view())
@@ -5273,7 +5295,6 @@ mod tests {
     /// An explicit source ICC is embedded verbatim (KeepSource disposition),
     /// confirming the resolver doesn't disturb the existing ICC path.
     #[test]
-    #[allow(deprecated)] // Intentional legacy metadata-setter coverage.
     fn source_icc_is_kept_verbatim() {
         let buf = make_rgb8_pixels(32, 32);
         // Use the bundled Display P3 profile as a stand-in for a real source ICC.
@@ -5285,7 +5306,7 @@ mod tests {
         let meta = Metadata::none().with_icc(src_icc.clone());
         let out = WebpEncoderConfig::lossless()
             .job()
-            .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact)
+            .with_unfiltered_metadata(meta.filtered(&zencodec::MetadataPolicy::PreserveExact))
             .encoder()
             .unwrap()
             .encode(buf.as_view())
@@ -5302,7 +5323,6 @@ mod tests {
     /// Decode-side authority: a WebP carrying an ICCP chunk must report
     /// `ColorAuthority::Icc` on its `source_color` (WebP's only color carrier).
     #[test]
-    #[allow(deprecated)] // Intentional legacy metadata-setter coverage.
     fn decode_sets_icc_color_authority() {
         let buf = make_rgb8_pixels(32, 32);
         let src_icc: Arc<[u8]> = Arc::from(
@@ -5313,7 +5333,7 @@ mod tests {
         let meta = Metadata::none().with_icc(src_icc);
         let out = WebpEncoderConfig::lossless()
             .job()
-            .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact)
+            .with_unfiltered_metadata(meta.filtered(&zencodec::MetadataPolicy::PreserveExact))
             .encoder()
             .unwrap()
             .encode(buf.as_view())

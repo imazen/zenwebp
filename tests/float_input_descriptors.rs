@@ -70,7 +70,7 @@ fn floats_as_bytes(f: &[f32]) -> Vec<u8> {
 #[test]
 fn supported_descriptors_includes_floats() {
     use zencodec::encode::EncoderConfig;
-    let descs: &[PixelFormat] = WebpEncoderConfig::supported_descriptors();
+    let descs: &[PixelFormat] = WebpEncoderConfig::supported_pixel_formats();
     assert!(
         descs.contains(&PixelFormat::RGBF32_LINEAR),
         "RGBF32_LINEAR not advertised; descriptors = {descs:?}"
@@ -264,7 +264,6 @@ fn grayf32_lossy_roundtrip_within_tolerance() {
 /// turn into a linear ICC profile next to sRGB samples: the profile must say
 /// sRGB, with the CICP's primaries.
 #[test]
-#[allow(deprecated)] // Intentional legacy metadata-setter coverage.
 fn a_linear_cicp_on_f32_input_is_written_as_srgb() {
     use std::borrow::Cow;
     use zencodec::decode::{Decode as _, DecodeJob as _, DecoderConfig as _};
@@ -280,9 +279,10 @@ fn a_linear_cicp_on_f32_input_is_written_as_srgb() {
     .unwrap();
     let out = WebpEncoderConfig::lossless()
         .job()
-        .with_metadata_policy(
-            zencodec::Metadata::none().with_cicp(zencodec::Cicp::new(12, 8, 0, true)),
-            zencodec::MetadataPolicy::PreserveExact,
+        .with_unfiltered_metadata(
+            zencodec::Metadata::none()
+                .with_cicp(zencodec::Cicp::new(12, 8, 0, true))
+                .filtered(&zencodec::MetadataPolicy::PreserveExact),
         )
         .encoder()
         .unwrap()

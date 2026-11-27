@@ -9,7 +9,6 @@ use zenpixels::{Cicp, ColorSpace, PixelFormat, PixelView};
 use zenwebp::zencodec::WebpEncoderConfig;
 
 #[test]
-#[allow(deprecated)] // Exercise the documented legacy metadata path.
 fn still_p3_carrier_matches_colorants_and_trc_and_preserves_authored_icc() {
     let authored = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
     let codes = [0, 32, 255, 192, 128, 8];
@@ -22,7 +21,7 @@ fn still_p3_carrier_matches_colorants_and_trc_and_preserves_authored_icc() {
         let spec = PixelFormat::new(zenpixels::SampleLayout::RGB8, ColorSpace::DISPLAY_P3);
         let out = WebpEncoderConfig::lossless()
             .job()
-            .with_metadata_policy(metadata, MetadataPolicy::PreserveExact)
+            .with_unfiltered_metadata(metadata.filtered(&MetadataPolicy::PreserveExact))
             .encoder()
             .unwrap()
             .encode(PixelView::from_bytes(&codes, 2, 1, &spec).unwrap())

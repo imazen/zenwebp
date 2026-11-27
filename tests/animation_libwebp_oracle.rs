@@ -44,12 +44,11 @@ fn libwebp_durations(frames: &[webpx::Frame]) -> Vec<u32> {
         .collect()
 }
 
-#[allow(deprecated)] // Intentional legacy metadata-setter coverage.
 fn encode(durations: &[u32], plays: u32, metadata: zencodec::Metadata) -> (Vec<u8>, Vec<Vec<u8>>) {
     let mut enc = WebpEncoderConfig::lossless()
         .job()
         .with_loop_count(Some(plays))
-        .with_metadata_policy(metadata, zencodec::MetadataPolicy::PreserveExact)
+        .with_unfiltered_metadata(metadata.filtered(&zencodec::MetadataPolicy::PreserveExact))
         .animation_frame_encoder()
         .unwrap();
     let mut sources = Vec::new();
@@ -92,7 +91,6 @@ fn animation_encode_round_trips_through_libwebp() {
 /// `WebPAnimEncoderAssemble` does (#11): byte-identical to the still encoder
 /// with the same metadata, and libwebp reads it as a non-animated image.
 #[test]
-#[allow(deprecated)] // Intentional legacy metadata-setter coverage.
 fn single_frame_animation_encodes_as_still() {
     let icc = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
     let metadata = || {
@@ -104,7 +102,7 @@ fn single_frame_animation_encodes_as_still() {
     let (data, sources) = encode(&[250], 2, metadata());
     let still = WebpEncoderConfig::lossless()
         .job()
-        .with_metadata_policy(metadata(), zencodec::MetadataPolicy::PreserveExact)
+        .with_unfiltered_metadata(metadata().filtered(&zencodec::MetadataPolicy::PreserveExact))
         .encoder()
         .unwrap()
         .encode(frame(1).as_view())

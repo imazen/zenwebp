@@ -2277,7 +2277,6 @@ fn decode_with(
 
 /// Q1: the job's policy, limits and stop token change the answer.
 #[test]
-#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn review4_q1_job_settings() {
     use zencodec::decode::DecodePolicy;
     let data = still_with_meta(
@@ -2294,7 +2293,12 @@ fn review4_q1_job_settings() {
         .with_allow_icc(false)
         .with_allow_exif(false)
         .with_allow_xmp(false);
-    let job = || WebpDecoderConfig::new().job().with_policy(strip);
+    let job = || {
+        WebpDecoderConfig::new()
+            .job()
+            .try_with_policy(strip)
+            .unwrap()
+    };
     let info = job().probe(&data).unwrap();
     assert!(info.source_color.icc_profile.is_none());
     assert!(info.embedded_metadata.exif.is_none() && info.embedded_metadata.xmp.is_none());
@@ -2325,7 +2329,8 @@ fn review4_q1_job_settings() {
     let job = || {
         WebpDecoderConfig::new()
             .job()
-            .with_policy(DecodePolicy::none().with_allow_animation(false))
+            .try_with_policy(DecodePolicy::none().with_allow_animation(false))
+            .unwrap()
     };
     assert!(
         job()

@@ -44,37 +44,48 @@ fn p3_carrier_is_available_in_the_isolated_consumer() {
     assert_eq!(webpx::decode_rgb(out.data()).unwrap().0, FIRST);
 }
 
+fn encode_rows_to_vec<E: Encoder>(
+    enc: E,
+    pixels: PixelView<'_>,
+    bytes: &mut Vec<u8>,
+) -> Result<zencodec_io::row_encode::Completed, zencodec::At<zencodec_io::row_encode::Failure>> {
+    zencodec_io::row_encode::encode(
+        enc,
+        zencodec_io::row_encode::Raster::new(pixels),
+        bytes,
+        zencodec::operation::PolicySet::new(),
+        zencodec_io::row_encode::Options::new(
+            zencodec::storage::StorageBudget::new(64 * 1024 * 1024, 4096),
+            64 * 1024 * 1024,
+        ),
+        None,
+    )
+}
+
 #[test]
-#[allow(deprecated)] // Exercise the actual writer and its at-finish row path.
 fn pq_still_uses_the_production_database_feature() {
     let enc = WebpEncoderConfig::lossless().job().encoder().unwrap();
     let mut bytes = Vec::new();
-    let result = zencodec_io::encode_to_writer(enc, rgb(&FIRST, ColorSpace::BT2100_PQ), &mut bytes);
+    let result = encode_rows_to_vec(enc, rgb(&FIRST, ColorSpace::BT2100_PQ), &mut bytes);
     if cfg!(feature = "cms") {
         let report = result.unwrap();
-        assert_eq!(report.bytes, bytes.len() as u64);
+        assert_eq!(report.emitted, bytes.len() as u64);
         assert_eq!(webpx::decode_rgb(&bytes).unwrap().0, FIRST);
         icc::assert_pq(&webpx::get_icc_profile(&bytes).unwrap().unwrap());
     } else {
-        let Err(zencodec_io::EncodeWriteError::Encoder(err)) = result else {
-            panic!("expected an encoder error");
-        };
+        let err = result.expect_err("expected an encoder error");
         cms_required(&err);
         assert_eq!(bytes.len(), 0);
     }
 }
 
 #[test]
-#[allow(deprecated)] // Exercise the writer and documented metadata retention path.
 fn hlg_requires_rendering_and_preserves_an_explicit_rendered_profile() {
     let mut bytes = Vec::new();
     let enc = WebpEncoderConfig::lossless().job().encoder().unwrap();
     let scene = rgb(&FIRST, ColorSpace::BT2100_HLG_SCENE);
-    let Err(zencodec_io::EncodeWriteError::Encoder(err)) =
-        zencodec_io::encode_to_writer(enc, scene, &mut bytes)
-    else {
-        panic!("bare scene HLG must refuse still authoring");
-    };
+    let err = encode_rows_to_vec(enc, scene, &mut bytes)
+        .expect_err("bare scene HLG must refuse still authoring");
     cms_required(&err);
     assert_eq!(bytes.len(), 0);
 
@@ -116,13 +127,16 @@ fn hlg_requires_rendering_and_preserves_an_explicit_rendered_profile() {
         intent: RenderingIntent::RelativeColorimetric,
     };
     let job = || {
-        WebpEncoderConfig::lossless().job().with_metadata_policy(
-            Metadata::none().with_icc(profile.clone()),
-            MetadataPolicy::PreserveExact,
-        )
+        WebpEncoderConfig::lossless()
+            .job()
+            .with_unfiltered_metadata(
+                Metadata::none()
+                    .with_icc(profile.clone())
+                    .filtered(&MetadataPolicy::PreserveExact),
+            )
     };
     let enc = job().encoder().unwrap();
-    zencodec_io::encode_to_writer(enc, rgb(&FIRST, rendered.clone()), &mut bytes).unwrap();
+    encode_rows_to_vec(enc, rgb(&FIRST, rendered.clone()), &mut bytes).unwrap();
     assert_eq!(webpx::decode_rgb(&bytes).unwrap().0, FIRST);
     assert_eq!(
         webpx::get_icc_profile(&bytes).unwrap().as_deref(),

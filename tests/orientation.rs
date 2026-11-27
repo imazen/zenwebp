@@ -297,7 +297,6 @@ fn baked_orientation_retains_icc_origin_and_source_encoding() {
 }
 
 #[test]
-#[allow(deprecated)] // The legacy structured metadata setter is still supported.
 fn animation_encode_serializes_structured_orientation() {
     use zencodec::encode::{AnimationFrameEncoder, EncodeJob, EncoderConfig};
     use zenpixels::PixelView;
@@ -305,9 +304,10 @@ fn animation_encode_serializes_structured_orientation() {
 
     let mut encoder = WebpEncoderConfig::lossless()
         .job()
-        .with_metadata_policy(
-            zencodec::Metadata::none().with_orientation(Orientation::Rotate90),
-            zencodec::MetadataPolicy::PreserveExact,
+        .with_unfiltered_metadata(
+            zencodec::Metadata::none()
+                .with_orientation(Orientation::Rotate90)
+                .filtered(&zencodec::MetadataPolicy::PreserveExact),
         )
         .animation_frame_encoder()
         .unwrap();
@@ -368,7 +368,6 @@ fn assert_frame_pixels(
 }
 
 #[test]
-#[allow(deprecated)] // Exercise metadata retention on animation encode.
 fn true_animation_applies_orientation_at_all_delivery_boundaries() {
     use zencodec::animation::FrameDuration;
     use zencodec::decode::AnimationFrameDecoder;
@@ -381,11 +380,11 @@ fn true_animation_applies_orientation_at_all_delivery_boundaries() {
     let sources = [FIRST, second];
     let mut encoder = WebpEncoderConfig::lossless()
         .job()
-        .with_metadata_policy(
+        .with_unfiltered_metadata(
             Metadata::none()
                 .with_exif(complete_exif(6))
-                .with_icc(profile),
-            MetadataPolicy::PreserveExact,
+                .with_icc(profile)
+                .filtered(&MetadataPolicy::PreserveExact),
         )
         .animation_frame_encoder()
         .unwrap();
@@ -538,7 +537,6 @@ fn fixture_exif_orientation(exif: &[u8]) -> Option<u16> {
 }
 
 #[test]
-#[allow(deprecated)] // The documented PreserveExact metadata path.
 fn correct_decode_reencode_reconciles_exif_and_keeps_icc_and_display_pixels() {
     use zencodec::encode::{EncodeJob, Encoder, EncoderConfig};
     use zenwebp::zencodec::WebpEncoderConfig;
@@ -578,7 +576,11 @@ fn correct_decode_reencode_reconciles_exif_and_keeps_icc_and_display_pixels() {
     assert_frame_pixels(&decoded.pixels(), (2, 3), &expected, profile);
     let output = WebpEncoderConfig::lossless()
         .job()
-        .with_metadata_policy(decoded.metadata(), zencodec::MetadataPolicy::PreserveExact)
+        .with_unfiltered_metadata(
+            decoded
+                .metadata()
+                .filtered(&zencodec::MetadataPolicy::PreserveExact),
+        )
         .encoder()
         .unwrap()
         .encode(decoded.pixels())

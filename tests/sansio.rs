@@ -376,15 +376,15 @@ fn complete_animation_limits_are_checked_after_early_header() {
 }
 
 #[test]
-#[allow(deprecated)] // Intentional legacy metadata-setter coverage.
 fn structured_orientation_uses_exif_without_rotating_encoded_pixels() {
     use zencodec::{Metadata, MetadataPolicy, Orientation};
     let image = tk::TestImage::rgb8_gradient(19, 11);
     let bytes = E::lossless()
         .job()
-        .with_metadata_policy(
-            Metadata::none().with_orientation(Orientation::Rotate90),
-            MetadataPolicy::Web,
+        .with_unfiltered_metadata(
+            Metadata::none()
+                .with_orientation(Orientation::Rotate90)
+                .filtered(&MetadataPolicy::Web),
         )
         .encode(image.as_slice())
         .unwrap();

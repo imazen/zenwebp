@@ -31,14 +31,14 @@ fn solid_pattern_4bpp(w: u32, h: u32, rgb_order: bool) -> Vec<u8> {
 
 #[test]
 fn supported_descriptors_includes_rgbx_and_bgrx() {
-    let desc = <zenwebp::zencodec::WebpEncoderConfig as EncoderConfig>::supported_descriptors();
+    let desc = <zenwebp::zencodec::WebpEncoderConfig as EncoderConfig>::supported_pixel_formats();
     assert!(
         desc.contains(&PixelFormat::RGBX8_SRGB),
-        "RGBX8_SRGB must be in supported_descriptors"
+        "RGBX8_SRGB must be in supported_pixel_formats"
     );
     assert!(
         desc.contains(&PixelFormat::BGRX8_SRGB),
-        "BGRX8_SRGB must be in supported_descriptors"
+        "BGRX8_SRGB must be in supported_pixel_formats"
     );
 }
 

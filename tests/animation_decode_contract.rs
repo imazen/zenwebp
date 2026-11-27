@@ -17,7 +17,6 @@ fn view_icc<'a>(view: &'a zenpixels::PixelView<'_>) -> Option<&'a [u8]> {
     }
 }
 
-#[allow(deprecated)] // Intentional legacy metadata-setter coverage.
 fn encode(lossy: bool, icc: bool) -> Vec<u8> {
     let data: Vec<_> = (0..128 * 256 * 4)
         .map(|i| {
@@ -36,9 +35,10 @@ fn encode(lossy: bool, icc: bool) -> Vec<u8> {
     };
     let mut job = config.job();
     if icc {
-        job = job.with_metadata_policy(
-            zencodec::Metadata::none().with_icc(zenpixels_convert::icc_profiles::DISPLAY_P3_V4),
-            zencodec::MetadataPolicy::PreserveExact,
+        job = job.with_unfiltered_metadata(
+            zencodec::Metadata::none()
+                .with_icc(zenpixels_convert::icc_profiles::DISPLAY_P3_V4)
+                .filtered(&zencodec::MetadataPolicy::PreserveExact),
         );
     }
     let mut encoder = job.animation_frame_encoder().unwrap();
@@ -159,7 +159,6 @@ fn animation_decode_cancellation_reaches_lossy_and_lossless_kernels() {
 }
 
 #[test]
-#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn still_decoder_views_keep_icc_context_and_bgra_pixels() {
     use zencodec::decode::{Decode, StreamingDecode};
     use zencodec::encode::Encoder;
@@ -176,9 +175,10 @@ fn still_decoder_views_keep_icc_context_and_bgra_pixels() {
         };
         let output = config
             .job()
-            .with_metadata_policy(
-                zencodec::Metadata::none().with_icc(icc),
-                zencodec::MetadataPolicy::PreserveExact,
+            .with_unfiltered_metadata(
+                zencodec::Metadata::none()
+                    .with_icc(icc)
+                    .filtered(&zencodec::MetadataPolicy::PreserveExact),
             )
             .encoder()
             .unwrap()
@@ -199,7 +199,10 @@ fn still_decoder_views_keep_icc_context_and_bgra_pixels() {
             let job = || {
                 let job = WebpDecoderConfig::new().job();
                 if let Some(allow) = allow_icc {
-                    job.with_policy(zencodec::decode::DecodePolicy::default().with_allow_icc(allow))
+                    job.try_with_policy(
+                        zencodec::decode::DecodePolicy::default().with_allow_icc(allow),
+                    )
+                    .unwrap()
                 } else {
                     job
                 }

@@ -180,18 +180,16 @@ struct Rows {
 impl DecodeRowSink for Rows {
     fn provide_next_buffer(
         &mut self,
-        _y: u32,
-        height: u32,
-        width: u32,
+        strip: zencodec::decode::RowStrip,
         descriptor: PixelFormat,
     ) -> Result<PixelViewMut<'_>, zencodec::decode::SinkError> {
-        let stride = width as usize * descriptor.layout.bytes_per_pixel();
-        self.buf.resize(height as usize * stride, 0);
-        self.rows += height;
+        let stride = strip.width as usize * descriptor.layout.bytes_per_pixel();
+        self.buf.resize(strip.height as usize * stride, 0);
+        self.rows += strip.height;
         Ok(PixelViewMut::new_with_format_cow(
             &mut self.buf,
-            width,
-            height,
+            strip.width,
+            strip.height,
             stride,
             zenpixels::FormatCow::from_owned(descriptor),
         )

@@ -1,16 +1,12 @@
 //! A job's pulse reaches native work once per intended poll, in both of how-far's
-//! reporting modes. A pulse that cannot report (`may_report() == false`, which
-//! zencodec's deprecated `with_stop` builds) polls exactly where the legacy stop
+//! reporting modes. A pulse that cannot report (`may_report() == false`, including
+//! a `StopOnly`-adapted stop token) polls exactly where the legacy stop
 //! token polls. A pulse that reports polls there too, plus the still encoders'
 //! percent callbacks, which check the pulse they report to; decodes report rows
 //! and frames without polling. Neither mode suppresses cancellation, and a
 //! reporting pulse keeps its reports.
-//!
-//! Only setters both the stop and the pulse traits have are used (`with_stop`,
-//! `with_pulse`, per-call `None`), so this builds against either zencodec.
 #![forbid(unsafe_code)]
 #![cfg(not(target_arch = "wasm32"))]
-#![allow(deprecated)] // The legacy `with_stop` arm, on purpose.
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -142,7 +138,7 @@ impl Pulse for Probe {
 /// How a job receives the probe.
 #[derive(Clone, Copy, Debug)]
 enum Arm {
-    /// The deprecated `with_stop` token.
+    /// A `StopOnly`-adapted stop token passed via `with_pulse`.
     Legacy,
     /// `with_pulse`, with a pulse that cannot report.
     Quiet,
@@ -159,14 +155,18 @@ impl Arm {
     fn decode_job(self, probe: &Arc<Probe>) -> WebpDecodeJob {
         let job = WebpDecoderConfig::new().job();
         match self {
-            Arm::Legacy => job.with_stop(zencodec::StopToken::new(Arc::clone(probe))),
+            Arm::Legacy => {
+                job.with_pulse(SharedPulse::new(how_far::StopOnly::new(Arc::clone(probe))))
+            }
             Arm::Quiet | Arm::Reporting => job.with_pulse(SharedPulse::new(Arc::clone(probe))),
         }
     }
     fn encode_job(self, config: WebpEncoderConfig, probe: &Arc<Probe>) -> WebpEncodeJob {
         let job = config.job();
         match self {
-            Arm::Legacy => job.with_stop(zencodec::StopToken::new(Arc::clone(probe))),
+            Arm::Legacy => {
+                job.with_pulse(SharedPulse::new(how_far::StopOnly::new(Arc::clone(probe))))
+            }
             Arm::Quiet | Arm::Reporting => job.with_pulse(SharedPulse::new(Arc::clone(probe))),
         }
     }
@@ -185,17 +185,15 @@ struct Rows {
 impl DecodeRowSink for Rows {
     fn provide_next_buffer(
         &mut self,
-        _y: u32,
-        height: u32,
-        width: u32,
+        strip: zencodec::decode::RowStrip,
         descriptor: PixelFormat,
     ) -> Result<PixelViewMut<'_>, zencodec::decode::SinkError> {
-        let stride = width as usize * descriptor.layout.bytes_per_pixel();
-        self.buf.resize(height as usize * stride, 0);
+        let stride = strip.width as usize * descriptor.layout.bytes_per_pixel();
+        self.buf.resize(strip.height as usize * stride, 0);
         Ok(PixelViewMut::new_with_format_cow(
             &mut self.buf,
-            width,
-            height,
+            strip.width,
+            strip.height,
             stride,
             zenpixels::FormatCow::from_owned(descriptor),
         )

@@ -342,7 +342,6 @@ mod native_contract {
     }
 
     #[test]
-    #[allow(deprecated)] // Intentional legacy metadata-setter coverage.
     fn animation_retains_metadata_and_synthesizes_cicp_color_like_still_images() {
         let icc = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
         let first = [12, 34, 56, 255].repeat(4);
@@ -358,7 +357,9 @@ mod native_contract {
             }
             let mut encoder = WebpEncoderConfig::lossless()
                 .job()
-                .with_metadata_policy(metadata, zencodec::MetadataPolicy::PreserveExact)
+                .with_unfiltered_metadata(
+                    metadata.filtered(&zencodec::MetadataPolicy::PreserveExact),
+                )
                 .animation_frame_encoder()
                 .unwrap();
             let spec = PixelFormat::new(
